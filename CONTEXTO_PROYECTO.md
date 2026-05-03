@@ -3,6 +3,17 @@
 ## Propósito general
 Este proyecto es un sistema de scheduling automático para la Universidad Nacional Mayor de San Marcos (UNMSM). Usa datos de la plataforma SUM y modela la generación de horarios como un problema de optimización basado en algoritmos genéticos.
 
+## Arquitectura general
+La aplicación está organizada en capas con responsabilidades claras:
+
+- Capa de datos (`data/`): adquiere información desde SUM y la transforma en objetos del dominio.
+- Capa de dominio (`models/`): define los modelos de datos centrales (`BloqueHorario`, `Seccion`, `Cromosoma`).
+- Capa de algoritmo genético (`genetic/`): genera la población inicial, cruza y muta soluciones, y ejecuta el bucle evolutivo.
+- Capa de evaluación (`fitness/`): valida soluciones mediante restricciones duras y puntúa preferencias suaves.
+- Capa de salida (`output/`): exporta o visualiza el resultado final.
+
+La ruta principal de ejecución es `main.py`, que orquesta el scraping, parsing y (eventualmente) la optimización.
+
 ## Estructura del proyecto
 
 ### Archivos de entrada y ejecución
@@ -106,6 +117,77 @@ Generación de resultados legibles.
 - `output/visualizer.py`
   - `visualizar_grilla(cromosoma)`.
   - TODO: no está implementado.
+
+## Resumen del contenido actual de cada archivo
+Esta sección lista qué hace cada archivo hoy y cuánto está implementado.
+
+- `main.py`
+  - Contenido actual: arranca la app, carga credenciales, invoca scraping y parsing, y muestra secciones en consola.
+  - Estado: implementado.
+
+- `data/scraper.py`
+  - Contenido actual: login Playwright, navegación al dashboard, fetch de API, retorna JSON.
+  - Estado: implementado.
+
+- `data/parser.py`
+  - Contenido actual: transforma JSON en `Seccion` y `BloqueHorario`.
+  - Estado: implementado.
+
+- `data/cache.py`
+  - Contenido actual: cache local JSON con TTL, `get` y `set`.
+  - Estado: parcialmente implementado; falta limpieza de expirados y uso en `main.py`.
+
+- `data/__init__.py`
+  - Contenido actual: exporta funciones del paquete.
+  - Estado: implementado.
+
+- `models/bloque.py`
+  - Contenido actual: clase `BloqueHorario` con detección de choques horarios.
+  - Estado: implementado.
+
+- `models/seccion.py`
+  - Contenido actual: clase `Seccion` con propiedades de disponibilidad y nombre de docente.
+  - Estado: implementado.
+
+- `models/cromosoma.py`
+  - Contenido actual: clase `Cromosoma` simple que guarda secciones.
+  - Estado: esqueleto; falta lógica de fitness y validaciones.
+
+- `models/__init__.py`
+  - Contenido actual: exporta modelos.
+  - Estado: implementado.
+
+- `genetic/population.py`
+  - Contenido actual: definición de función para generar población inicial.
+  - Estado: TODO completo.
+
+- `genetic/operators.py`
+  - Contenido actual: definición de `cruce` y `mutacion`.
+  - Estado: TODO completo.
+
+- `genetic/ga_engine.py`
+  - Contenido actual: firma de `ejecutar_ga` sin cuerpo.
+  - Estado: TODO completo.
+
+- `fitness/hard_constraints.py`
+  - Contenido actual: firmas de verificaciones de choques, cupos y prerequisitos.
+  - Estado: TODO completo.
+
+- `fitness/soft_constraints.py`
+  - Contenido actual: firmas de funciones de preferencia.
+  - Estado: TODO completo.
+
+- `fitness/evaluator.py`
+  - Contenido actual: combina hard/soft score y penaliza con `0.0` si falla hard.
+  - Estado: parcialmente implementado; falta integración con GA.
+
+- `output/exporter.py`
+  - Contenido actual: firmas de exportación a Excel/PDF.
+  - Estado: TODO completo.
+
+- `output/visualizer.py`
+  - Contenido actual: firma para mostrar una grilla semanal.
+  - Estado: TODO completo.
 
 ## Flujo de datos esperado
 
