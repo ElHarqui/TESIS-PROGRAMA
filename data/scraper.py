@@ -14,7 +14,7 @@ ENDPOINTS = {
     "prematricula":  f"{API_V2}/reportes/prematricula?accion=obtenerAlumnoPrematricula",
     "alumno":        f"{API_V2}/informacion/perfil?accion=obtenerInformacionAlumno",
     "plan_estudios": f"{API_V2}/planEstudios?accion=obtenerPlanEstudios",
-    # prerequisitos vienen dentro de plan_estudios
+    "historial":     f"{API_V2}/informacion/historial?accion=obtenerHistorialAcademico",  # ← nuevo
 }
 
 
@@ -74,6 +74,7 @@ async def obtener_datos_sum(usuario: str, password: str) -> dict:
         "prematricula":  None,
         "alumno":        None,
         "plan_estudios": None,
+        "historial":     None,  # ← nuevo
         "errores":       [],
     }
 

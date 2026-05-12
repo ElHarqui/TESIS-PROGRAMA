@@ -9,6 +9,8 @@ from data import (
     extraer_prerequisitos,
     parsear_prematricula,
     Cache,
+    parsear_historial,
+    extraer_aprobados,
 )
 
 load_dotenv()
@@ -42,6 +44,8 @@ async def main():
     plan          = parsear_plan_estudios(datos_raw["plan_estudios"])
     prerequisitos = extraer_prerequisitos(plan)
     prematricula  = parsear_prematricula(datos_raw["prematricula"])
+    historial  = parsear_historial(datos_raw["historial"])
+    aprobados  = extraer_aprobados(historial)
 
     # ── 3. Resumen alumno ─────────────────────────────────────
     cod_plan = plan[0].codPlan if plan else "N/A"
@@ -76,8 +80,12 @@ async def main():
         for b in s.bloques:
             print(f"  {b.dia:10} {b.horaInicio}-{b.horaFin}  [{b.desTipo}]  Aula: {b.codAula}")
         print()
-
-    # ── 7. Endpoints fallidos ─────────────────────────────────
+        
+    # ── 7. Historial académico ─────────────────────────────────
+    print(f"📜 Historial académico: {len(historial)} registros")
+    print(f"✅ Asignaturas aprobadas: {len(aprobados)}")
+    print(f"📊 Promedio histórico: {sum(r.calificacion for r in historial) / len(historial):.1f}\n")
+    # ── 8. Endpoints fallidos ─────────────────────────────────
     if datos_raw.get("errores"):
         print(f"⚠️  Endpoints fallidos: {datos_raw['errores']}")
 
