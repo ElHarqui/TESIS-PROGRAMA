@@ -146,3 +146,50 @@ def parsear_prematricula(data: dict) -> list:
     """
     raw_list = data.get("data", data) if isinstance(data, dict) else data
     return raw_list if isinstance(raw_list, list) else []
+
+@dataclass
+class RegistroHistorial:
+    codSemestre: str
+    ciclo: int
+    codAsignatura: str
+    desAsignatura: str
+    creditos: float
+    calificacion: int
+    codTipoAsignatura: str   # "O" = obligatorio, "E" = electivo
+    codSeccion: int
+    codTipoActa: str         # "P" = promovido, etc.
+
+
+def parsear_historial(data: dict) -> List[RegistroHistorial]:
+    """
+    Parsea /informacion/historial → lista de RegistroHistorial.
+    Útil para:
+    - Detectar asignaturas aprobadas (prerequisitos)
+    - Inferir preferencias del alumno (turno, docentes)
+    - Entrenar el módulo predictivo de demanda (tesis)
+    """
+    raw = data.get("data", data) if isinstance(data, dict) else data
+    raw_list = raw.get("historial", raw) if isinstance(raw, dict) else raw
+
+    return [
+        RegistroHistorial(
+            codSemestre=h.get("codSemestre", ""),
+            ciclo=int(h.get("ciclo", 0)),
+            codAsignatura=h.get("codAsignatura", ""),
+            desAsignatura=h.get("desAsignatura", "").strip(),
+            creditos=float(h.get("creditos", 0.0)),
+            calificacion=int(h.get("calificacion", 0)),
+            codTipoAsignatura=h.get("codTipoAsignatura", ""),
+            codSeccion=int(h.get("codSeccion", 0)),
+            codTipoActa=h.get("codTipoActa", ""),
+        )
+        for h in raw_list
+    ]
+
+
+def extraer_aprobados(historial: List[RegistroHistorial]) -> set:
+    """
+    Retorna un set de codAsignatura que el alumno aprobó (calificacion >= 11).
+    Usado por hard_constraints.verificar_prerequisitos().
+    """
+    return {r.codAsignatura for r in historial if r.calificacion >= 11}

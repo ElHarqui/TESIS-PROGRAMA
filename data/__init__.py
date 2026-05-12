@@ -6,8 +6,11 @@ from .parser import (
     parsear_plan_estudios,
     extraer_prerequisitos,
     parsear_prematricula,
+    parsear_historial,       # ← nuevo
+    extraer_aprobados,       # ← nuevo
     DatosAlumno,
     AsignaturaPlan,
+    RegistroHistorial,       # ← nuevo
 )
 from .cache import Cache
 
@@ -19,7 +22,10 @@ __all__ = [
     "parsear_plan_estudios",
     "extraer_prerequisitos",
     "parsear_prematricula",
+    "parsear_historial",
+    "extraer_aprobados",
     "DatosAlumno",
     "AsignaturaPlan",
+    "RegistroHistorial",
     "Cache",
 ]
