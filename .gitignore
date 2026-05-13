@@ -188,8 +188,8 @@ cython_debug/
 # todo el historial academico del alumno. NUNCA debe estar en git.
 data/cache.json
 
-# Preferencias manuales del alumno (scores de docentes). Personal por alumno.
-data/preferencias_docentes.json
+# Preferencias manuales del alumno (docentes, horarios, etc). Personal por alumno.
+data/preferencias_*.json
 
 # PDFs y documentos personales (historial academico, constancias, etc.)
 HISTORIAL DATA/

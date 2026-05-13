@@ -12,11 +12,6 @@ def verificar_choques(cromosoma: Cromosoma) -> bool:
     return True
 
 
-def verificar_cupos(cromosoma: Cromosoma) -> bool:
-    """True si todas las secciones del cromosoma tienen al menos un cupo libre."""
-    return all(s.matriculados < s.topeAlumnos for s in cromosoma.secciones)
-
-
 def verificar_prerequisitos(cromosoma: Cromosoma, contexto: ContextoAlumno) -> bool:
     """
     True si toda asignatura del cromosoma cumple su prerequisito:
