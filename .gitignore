@@ -173,9 +173,33 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-# Cursor  
-#  Cursor is an AI-powered code editor.`.cursorignore` specifies files/directories to 
+# Cursor
+#  Cursor is an AI-powered code editor.`.cursorignore` specifies files/directories to
 #  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# ──────────────────────────────────────────────
+# Proyecto Tesis — datos personales y locales
+# ──────────────────────────────────────────────
+
+# Cache del scraping SUM: contiene DNI, correos, direccion, celular, ponderado y
+# todo el historial academico del alumno. NUNCA debe estar en git.
+data/cache.json
+
+# Preferencias manuales del alumno (docentes, horarios, etc). Personal por alumno.
+data/preferencias_*.json
+
+# PDFs y documentos personales (historial academico, constancias, etc.)
+HISTORIAL DATA/
+*.pdf
+
+# Configuracion local de Claude Code / asistentes IDE
+.claude/
+
+# Outputs del GA (horarios exportados con datos del alumno)
+output/*.xlsx
+output/*.pdf
+output/*.png
+output/*.html

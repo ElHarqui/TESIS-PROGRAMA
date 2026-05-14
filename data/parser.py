@@ -120,6 +120,7 @@ def parsear_plan_estudios(data: dict) -> List[AsignaturaPlan]:
             codAsignaturaPre=item.get("codAsignaturaPre", "NR"),
             desAsignaturaPre=item.get("desAsignaturaPre", "NR"),
             creditosPre=float(item.get("creditosPre", 0.0)),
+            codPlan=item.get("codPlan", "").strip(),
         ))
     return result
 
