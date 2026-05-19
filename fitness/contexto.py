@@ -39,13 +39,31 @@ class PreferenciasHorario:
 
 
 @dataclass
+class PesosFitness:
+    """
+    Pesos del fitness, externalizables vía config_ga.json.
+
+    - peso_horarios / peso_docentes / peso_cupos: ponderan los 3 soft constraints.
+      Idealmente suman 1.0 (el fitness final queda en [0, 1]).
+    - sub_peso_turno / sub_peso_dias_libres / sub_peso_densidad: ponderan los 3
+      sub-criterios DENTRO de preferencia_horarios. También idealmente suman 1.0.
+    """
+    peso_horarios: float = 0.4
+    peso_docentes: float = 0.3
+    peso_cupos: float = 0.3
+    sub_peso_turno: float = 1 / 3
+    sub_peso_dias_libres: float = 1 / 3
+    sub_peso_densidad: float = 1 / 3
+
+
+@dataclass
 class ContextoAlumno:
     """
     Contexto necesario para evaluar un cromosoma contra las restricciones del alumno.
 
-    Se construye una sola vez en main.py a partir del plan de estudios, el historial y
-    las preferencias del alumno, y se reutiliza durante toda la evolución del GA — los
-    evaluadores son puros respecto a este contexto, no lo mutan.
+    Se construye una sola vez en main.py a partir del plan de estudios, el historial,
+    las preferencias del alumno y la configuración, y se reutiliza durante toda la
+    evolución del GA — los evaluadores son puros respecto a este contexto, no lo mutan.
     """
     prerequisitos: Dict[str, Optional[str]] = field(default_factory=dict)
     aprobados: Set[str] = field(default_factory=set)
@@ -54,3 +72,5 @@ class ContextoAlumno:
     scores_docentes: Dict[str, float] = field(default_factory=dict)
     # Preferencias sobre la distribución horaria.
     prefs_horario: PreferenciasHorario = field(default_factory=PreferenciasHorario)
+    # Pesos del fitness (externalizables vía config_ga.json).
+    pesos: PesosFitness = field(default_factory=PesosFitness)

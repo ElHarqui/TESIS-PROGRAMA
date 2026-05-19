@@ -26,22 +26,11 @@ from fitness import (
 )
 from genetic import generar_poblacion_inicial, ejecutar_ga, top_k_diversos
 from genetic.population import _es_seccion_valida
+from config import cargar_config
 
 load_dotenv()
 
 CACHE_KEY = "datos_sum"
-
-# ──────────────────────────────────────────────
-# CONFIGURACIÓN DEL GA (tunear si hace falta)
-# ──────────────────────────────────────────────
-GA_TAMANO_POBLACION = 100
-GA_GENERACIONES     = 50
-GA_TASA_MUTACION    = 0.15
-GA_TAMANO_TORNEO    = 3
-GA_ELITISMO         = 5
-GA_TOP_K            = 5
-GA_DISTANCIA_MINIMA = 1
-GA_SEED             = 42  # None para no determinístico
 
 # Orden canónico de días para mostrar el horario
 ORDEN_DIAS = ["LUNES", "MARTES", "MIERCOLES", "JUEVES", "VIERNES", "SABADO", "DOMINGO"]
@@ -119,15 +108,18 @@ async def main():
     print(f"📖 Plan: {len(plan)} asignaturas  |  📝 Prematrícula: {len(prematricula)}  |  📚 Secciones: {len(secciones)}  |  ✅ Aprobadas: {len(aprobados)}\n")
 
     # ── 4. Construir contexto del alumno ──────────────────────
+    config = cargar_config()
     contexto = ContextoAlumno(
         prerequisitos=prerequisitos,
         aprobados=aprobados,
-        max_creditos=24.0,
+        max_creditos=config.max_creditos,
         scores_docentes=cargar_scores_docentes(),
         prefs_horario=cargar_preferencias_horarios(),
+        pesos=config.pesos,
     )
 
     # ── 5. Preparar input del GA ──────────────────────────────
+    ga = config.ga
     asignaturas_objetivo = [p["codAsignatura"] for p in prematricula]
     secciones_por_asig = {}
     for s in secciones:
@@ -135,12 +127,12 @@ async def main():
             secciones_por_asig.setdefault(s.codAsignatura, []).append(s)
 
     # ── 6. Población inicial ──────────────────────────────────
-    print(f"🧬 Generando población inicial ({GA_TAMANO_POBLACION} cromosomas)...")
+    print(f"🧬 Generando población inicial ({ga.tamano_poblacion} cromosomas)...")
     poblacion, omitidas = generar_poblacion_inicial(
         asignaturas_objetivo,
         secciones,
-        tamano_poblacion=GA_TAMANO_POBLACION,
-        seed=GA_SEED,
+        tamano_poblacion=ga.tamano_poblacion,
+        seed=ga.seed,
     )
 
     if omitidas:
@@ -152,29 +144,29 @@ async def main():
 
     fitness_ini = [evaluar_fitness(c, contexto) for c in poblacion]
     n_val_ini = sum(1 for f in fitness_ini if f > 0)
-    print(f"  Gen 0:  válidos={n_val_ini}/{GA_TAMANO_POBLACION}  best={max(fitness_ini):.4f}  avg={sum(fitness_ini)/len(fitness_ini):.4f}")
+    print(f"  Gen 0:  válidos={n_val_ini}/{ga.tamano_poblacion}  best={max(fitness_ini):.4f}  avg={sum(fitness_ini)/len(fitness_ini):.4f}")
 
     # ── 7. Ejecutar GA ────────────────────────────────────────
-    print(f"🔬 Ejecutando GA por {GA_GENERACIONES} generaciones...")
+    print(f"🔬 Ejecutando GA por {ga.generaciones} generaciones...")
     t0 = time.time()
     evaluador = lambda c: evaluar_fitness(c, contexto)
     poblacion_final = ejecutar_ga(
         poblacion,
         evaluador=evaluador,
         secciones_por_asig=secciones_por_asig,
-        max_generaciones=GA_GENERACIONES,
-        tasa_mutacion=GA_TASA_MUTACION,
-        tamano_torneo=GA_TAMANO_TORNEO,
-        elitismo=GA_ELITISMO,
+        max_generaciones=ga.generaciones,
+        tasa_mutacion=ga.tasa_mutacion,
+        tamano_torneo=ga.tamano_torneo,
+        elitismo=ga.elitismo,
     )
     duracion = time.time() - t0
 
     fitness_fin = [evaluar_fitness(c, contexto) for c in poblacion_final]
     n_val_fin = sum(1 for f in fitness_fin if f > 0)
-    print(f"  Gen {GA_GENERACIONES}: válidos={n_val_fin}/{GA_TAMANO_POBLACION}  best={max(fitness_fin):.4f}  avg={sum(fitness_fin)/len(fitness_fin):.4f}  ({duracion:.2f}s)\n")
+    print(f"  Gen {ga.generaciones}: válidos={n_val_fin}/{ga.tamano_poblacion}  best={max(fitness_fin):.4f}  avg={sum(fitness_fin)/len(fitness_fin):.4f}  ({duracion:.2f}s)\n")
 
     # ── 8. Top-K diversos ─────────────────────────────────────
-    top = top_k_diversos(poblacion_final, fitness_fin, k=GA_TOP_K, distancia_minima=GA_DISTANCIA_MINIMA)
+    top = top_k_diversos(poblacion_final, fitness_fin, k=ga.top_k, distancia_minima=ga.distancia_minima)
 
     if not top:
         print("❌ El GA no encontró ningún horario válido.")
@@ -185,8 +177,8 @@ async def main():
     for rank, c in enumerate(top, 1):
         _imprimir_horario(rank, c, contexto)
 
-    if len(top) < GA_TOP_K:
-        print(f"\nℹ️  Solo se encontraron {len(top)} horarios suficientemente diversos (pedidos {GA_TOP_K}).")
+    if len(top) < ga.top_k:
+        print(f"\nℹ️  Solo se encontraron {len(top)} horarios suficientemente diversos (pedidos {ga.top_k}).")
 
     # ── 9. Endpoints fallidos ─────────────────────────────────
     if datos_raw.get("errores"):

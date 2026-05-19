@@ -71,16 +71,17 @@ def preferencia_horarios(cromosoma: Cromosoma, contexto: ContextoAlumno) -> floa
     - score_densidad: compacto vs distribuido
 
     Cada sub-criterio en "indiferente" cuenta como neutral (0.5).
-    Promedio simple de los 3.
+    Los sub-pesos viven en contexto.pesos (externalizables vía config_ga.json).
     """
     if not cromosoma.secciones:
         return SCORE_NEUTRAL
     prefs = contexto.prefs_horario
+    pesos = contexto.pesos
     return (
-        _score_turno(cromosoma, prefs)
-        + _score_dias_libres(cromosoma, prefs)
-        + _score_densidad(cromosoma, prefs)
-    ) / 3
+        pesos.sub_peso_turno * _score_turno(cromosoma, prefs)
+        + pesos.sub_peso_dias_libres * _score_dias_libres(cromosoma, prefs)
+        + pesos.sub_peso_densidad * _score_densidad(cromosoma, prefs)
+    )
 
 
 def preferencia_docentes(cromosoma: Cromosoma, contexto: ContextoAlumno) -> float:

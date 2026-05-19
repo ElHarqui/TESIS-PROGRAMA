@@ -1,0 +1,429 @@
+# Contexto de Avance — Tesis: Optimizador de Matrícula UNMSM con Algoritmo Genético
+
+> Documento de contexto para asistentes LLM. Refleja el estado REAL del proyecto.
+> Última actualización: mayo 2026.
+
+---
+
+## 1. Resumen ejecutivo
+
+Sistema que genera **horarios de matrícula óptimos** para alumnos de la Universidad Nacional
+Mayor de San Marcos (UNMSM). Extrae datos del Sistema Único de Matrícula (SUM) mediante web
+scraping y usa un **algoritmo genético (GA)** para producir **~5 horarios diversos** que se
+ajustan a las preferencias del alumno y a las condiciones reales (cupos, prerequisitos,
+choques horarios).
+
+**Objetivo de la tesis**: crear una herramienta que, según el alumno, le genere varios
+horarios (aproximadamente 5) ajustados a sus gustos y a las distintas condiciones que
+se le presentan — en particular el promedio ponderado, que en UNMSM determina el turno
+de matrícula.
+
+**Estado global**: el núcleo funcional (scraping → parsing → GA → 5 horarios) está
+**operativo y probado end-to-end**. Faltan: módulo predictivo de vacantes, capa de
+salida visual/exportable, e interfaz de usuario.
+
+---
+
+## 2. El problema de dominio
+
+### 2.1 Matrícula en UNMSM
+
+El alumno se matricula eligiendo **secciones** de las **asignaturas** de su plan de estudios.
+Cada sección tiene uno o varios **bloques horarios** (teoría, práctica, laboratorio), un
+**docente**, un **cupo máximo** (`topeAlumnos`) y una cantidad de **matriculados** actuales.
+
+### 2.2 Sistema de turnos por ponderado (clave para la tesis)
+
+La matrícula NO es por orden de llegada. La UNMSM separa a los alumnos en **turnos según su
+promedio ponderado**, en **rangos de 2 puntos**:
+
+- Ponderado 18–20 → se matriculan **primero**
+- Ponderado 16–18 → segundo turno
+- Ponderado 14–16 → tercer turno
+- ... y así sucesivamente
+
+**Consecuencia**: cuando a un alumno le toca su turno, las secciones ya tienen cierta
+ocupación por los alumnos de turnos anteriores. Predecir cuántos cupos quedarán disponibles
+al momento del turno del alumno es el **módulo predictivo de demanda** (planeado, ver §9).
+
+### 2.3 Restricciones del problema
+
+- **Choques horarios**: dos bloques no pueden solaparse en día + hora.
+- **Prerequisitos**: una asignatura solo se puede tomar si su prerequisito está aprobado.
+- **Cupos**: las secciones tienen capacidad limitada.
+- **Límite de créditos**: máximo 24 créditos por ciclo (configurable).
+- **Preferencias del alumno**: turnos horarios, docentes, días libres.
+
+---
+
+## 3. Arquitectura del sistema
+
+Aplicación en capas, escrita en **Python 3.13**. Cada capa es un paquete:
+
+```
+TESIS PROGRAMA/
+├── main.py              # Orquestador: scraping → parsing → GA → muestra 5 horarios
+├── data/                # Capa de datos: adquisición y transformación
+├── models/              # Capa de dominio: entidades centrales
+├── fitness/             # Capa de evaluación: restricciones y scoring
+├── genetic/             # Capa de algoritmo genético
+└── output/              # Capa de salida (PENDIENTE)
+```
+
+**Dependencias actuales**: `playwright` (scraping), `python-dotenv` (variables de entorno).
+
+---
+
+## 4. Estado de implementación por capa
+
+| Capa | Estado | Detalle |
+|------|--------|---------|
+| `data/` | ✅ 100% | Scraper Playwright + parsers de 5 endpoints + cache JSON con TTL |
+| `models/` | ✅ 100% | `BloqueHorario`, `Seccion`, `Cromosoma` con sus métodos y propiedades |
+| `fitness/` | ✅ ~95% | 4 hard constraints + 3 soft constraints + contexto + evaluador |
+| `genetic/` | ✅ 100% | Población inicial + selección + operadores + motor + top-K diverso |
+| `output/` | ❌ 0% | `visualizer.py` y `exporter.py` siguen siendo TODOs |
+
+---
+
+## 5. Flujo de ejecución end-to-end
+
+Al correr `python main.py`:
+
+1. **Carga de credenciales**: lee `LOGIN` y `PASSWORD` desde `.env`.
+2. **Caché**: si `data/cache.json` existe y tiene < 1 hora, usa los datos cacheados.
+   Si no, hace scraping.
+3. **Scraping** (`data/scraper.py`): login con Playwright en el SUM y consulta de 5 endpoints
+   de la API interna (`programacion`, `prematricula`, `alumno`, `plan_estudios`, `historial`).
+4. **Parsing** (`data/parser.py`): convierte el JSON crudo en objetos de dominio.
+5. **Construcción de contexto**: arma un `ContextoAlumno` con prerequisitos, asignaturas
+   aprobadas, límite de créditos y preferencias (docentes y horarios).
+6. **Generación de población inicial** (`genetic/population.py`): 100 cromosomas aleatorios.
+7. **Ejecución del GA** (`genetic/ga_engine.py`): 50 generaciones de evolución.
+8. **Extracción del top-5 diverso**: selecciona 5 horarios buenos y distintos entre sí.
+9. **Presentación**: imprime los 5 horarios en consola, organizados por día.
+
+Tiempo: ~0.5 s con caché; ~30 s si scrapea (abre navegador).
+
+---
+
+## 6. Modelos de dominio (`models/`)
+
+### `BloqueHorario` (`models/bloque.py`)
+Un bloque de clase. Campos: `codAsignatura`, `codSeccion`, `codDocente`, `horario`, `dia`,
+`horaInicio`, `horaFin`, `codAula`, `tipo`, `desTipo`.
+- `hora_inicio_int` / `hora_fin_int`: convierten "HH:MM" a minutos.
+- `choca_con(otro)`: detecta solapamiento horario con otro bloque.
+
+### `Seccion` (`models/seccion.py`)
+Una sección de asignatura. Campos: `ciclo`, `codAsignatura`, `desAsignatura`, `creditos`,
+`codSeccion`, `codDocente`, `nomDocente`, `apePatDocente`, `apeMatDocente`, `topeAlumnos`,
+`matriculados`, `bloques` (lista de `BloqueHorario`).
+- `docente_completo`: nombre completo del docente.
+- `disponibilidad`: porcentaje de cupos libres `(tope - matriculados) / tope * 100`.
+
+### `Cromosoma` (`models/cromosoma.py`)
+**Una solución candidata = un horario completo.** Es una lista de `Seccion`, una por cada
+asignatura que el alumno quiere matricular.
+
+### Modelos de datos auxiliares (`data/parser.py`)
+- `DatosAlumno`: perfil del alumno (ciclo, ponderado, plan, etc.).
+- `AsignaturaPlan`: una asignatura del plan de estudios con su prerequisito.
+- `RegistroHistorial`: una asignatura cursada con su calificación.
+
+---
+
+## 7. Sistema de fitness (`fitness/`)
+
+El **fitness** es un número entre 0 y 1 que mide qué tan bueno es un horario (cromosoma).
+
+### 7.1 Hard constraints (`fitness/hard_constraints.py`)
+
+Si un cromosoma viola CUALQUIER hard constraint, su fitness es **0.0** (descalificado).
+Son violaciones físicamente imposibles, no negociables:
+
+| Constraint | Falla cuando |
+|------------|--------------|
+| `verificar_choques` | Dos bloques se solapan en día + hora |
+| `verificar_asignaturas_unicas` | Hay dos secciones de la misma asignatura |
+| `verificar_limite_creditos` | La suma de créditos supera el máximo (24) |
+| `verificar_prerequisitos` | Una asignatura tiene prerequisito no aprobado |
+
+### 7.2 Soft constraints (`fitness/soft_constraints.py`)
+
+Si el cromosoma pasa todos los hard, se calculan 3 scores suaves (0-1 cada uno):
+
+| Soft constraint | Qué mide |
+|-----------------|----------|
+| `preferencia_horarios` | Ajuste a turno preferido + días libres + densidad de clases |
+| `preferencia_docentes` | Promedio de scores de los docentes del cromosoma |
+| `preferencia_cupos` | Disponibilidad de cupos (promedio de `disponibilidad`) |
+
+`preferencia_horarios` es a su vez el promedio de 3 sub-scores:
+- **turno**: % de bloques cuyo inicio cae en el rango horario preferido
+  (mañana 7-13, tarde 13-18, noche 18-22).
+- **días libres**: fracción de días deseados que efectivamente quedan sin clase.
+- **densidad**: `compacto` premia menos días con clase; `distribuido` premia más.
+
+### 7.3 Fórmula del fitness (`fitness/evaluator.py`)
+
+```
+Si falla algún hard constraint → fitness = 0.0
+Si no:
+    fitness = 0.4 × preferencia_horarios
+            + 0.3 × preferencia_docentes
+            + 0.3 × preferencia_cupos
+```
+
+Los pesos (0.4 / 0.3 / 0.3) suman 1.0, así que el fitness siempre cae en [0, 1].
+**Estos pesos viven en `config_ga.json`** (ver §16), no están hardcodeados.
+
+**Razón de los pesos**: el horario afecta la vida diaria del alumno durante todo el ciclo
+(por eso pesa más); docentes y cupos son importantes pero secundarios. El peso de cupos
+es alto porque correlaciona con la probabilidad real de conseguir la sección bajo el
+sistema de turnos.
+
+### 7.4 `ContextoAlumno` (`fitness/contexto.py`)
+
+Objeto que encapsula TODO lo que las constraints necesitan saber del alumno:
+`prerequisitos`, `aprobados`, `max_creditos`, `scores_docentes`, `prefs_horario`.
+Se construye una vez y se reutiliza durante toda la evolución (inmutable).
+
+---
+
+## 8. El algoritmo genético (`genetic/`)
+
+### 8.1 Representación
+
+- **Gen** = una sección elegida para una asignatura.
+- **Cromosoma** = un horario completo (lista de secciones).
+- **Población** = 100 cromosomas.
+
+### 8.2 Población inicial (`genetic/population.py`)
+
+`generar_poblacion_inicial`: crea 100 cromosomas; cada uno elige una sección aleatoria por
+cada asignatura de la prematrícula. Filtra "secciones fantasma" (sin horario válido). Si una
+asignatura no tiene ninguna sección disponible, la **omite** (no es obligatorio matricularse
+en todas si no hay cursos). Devuelve `(poblacion, asignaturas_omitidas)`.
+
+### 8.3 Loop generacional (`genetic/ga_engine.py` — `ejecutar_ga`)
+
+Por cada una de las 50 generaciones:
+
+1. **Evaluar** el fitness de cada cromosoma.
+2. **Elitismo**: los 5 mejores pasan intactos a la siguiente generación (garantiza no
+   retroceder).
+3. **Reproducción**: se llena el resto (95 individuos) con:
+   - **Selección por torneo**: se eligen 3 cromosomas al azar, gana el de mayor fitness.
+   - **Cruce uniforme**: para cada asignatura, el hijo hereda la sección del padre 1 o
+     del padre 2 al azar.
+   - **Mutación**: con probabilidad 15% por gen, una sección se reemplaza por otra
+     aleatoria de la misma asignatura.
+
+### 8.4 Operadores (`genetic/operators.py`, `genetic/selection.py`)
+
+- `seleccion_torneo` (tamaño 3) — robusta ante muchos cromosomas con fitness 0.
+- `seleccion_ruleta` — alternativa, probabilidad proporcional al fitness.
+- `cruce` — cruce uniforme por asignatura.
+- `mutacion` — reemplazo de sección con tasa configurable.
+
+### 8.5 Extracción del top-5 diverso (`genetic/ga_engine.py` — `top_k_diversos`)
+
+Al terminar la evolución no se devuelven los 5 de mayor fitness (podrían ser casi idénticos),
+sino 5 cromosomas **buenos Y distintos**. Algoritmo greedy: toma el mejor, y luego cada
+siguiente solo si difiere en al menos 1 sección de todos los ya elegidos. La distancia entre
+cromosomas se mide como número de secciones diferentes.
+
+### 8.6 Parámetros del GA (definidos en `config_ga.json`)
+
+| Parámetro | Valor actual |
+|-----------|--------------|
+| Tamaño de población | 100 |
+| Generaciones | 50 |
+| Tasa de mutación | 0.15 |
+| Tamaño de torneo | 3 |
+| Elitismo | 5 |
+| Top-K (horarios devueltos) | 5 |
+| Distancia mínima de diversidad | 1 sección |
+| Seed | 42 (`null` para no determinista) |
+
+Estos parámetros se cargan desde `config_ga.json` (ver §16); no están hardcodeados.
+
+---
+
+## 9. Preferencias del alumno
+
+Se capturan en dos archivos JSON editables (ignorados por git, son personales):
+
+### `data/preferencias_docentes.json`
+```json
+{
+  "scores": { "codDocente": 0.9, "otroCod": 0.1 }
+}
+```
+Score 0.0 = evitar, 0.5 = neutral (default si no está mapeado), 1.0 = preferido.
+
+### `data/preferencias_horarios.json`
+```json
+{
+  "turno_preferido": "noche",
+  "dias_libres_deseados": ["SABADO"],
+  "densidad": "compacto"
+}
+```
+- `turno_preferido`: `manana` | `tarde` | `noche` | `indiferente`.
+- `dias_libres_deseados`: lista de días en mayúsculas.
+- `densidad`: `compacto` | `distribuido` | `indiferente`.
+
+Cualquier valor `indiferente` neutraliza ese sub-score (cuenta como 0.5).
+
+---
+
+## 10. Datos del SUM: estructura y hallazgos
+
+### Endpoints consultados
+| Endpoint | Contenido |
+|----------|-----------|
+| `programacion` | Secciones disponibles este semestre con sus bloques horarios |
+| `prematricula` | Asignaturas que el alumno pre-cargó (define qué horarios armar) |
+| `alumno` | Perfil: ciclo, promedio ponderado, plan, situación académica |
+| `plan_estudios` | Plan completo con prerequisitos de cada asignatura |
+| `historial` | Asignaturas cursadas con calificaciones |
+
+### Hallazgos importantes (descubiertos analizando datos reales)
+
+1. **El historial NO incluye `codDocente`**. Solo el número de sección. Por eso no se puede
+   construir automáticamente un score de docentes desde las notas pasadas — las preferencias
+   de docentes deben cargarse manualmente.
+2. **Existen "secciones fantasma"**: secciones que el SUM devuelve con `dia = "NR"`,
+   `horaInicio = None` y `topeAlumnos = 1`. Son placeholders sin horario real. Se filtran
+   antes de generar la población.
+3. **Prerequisitos siempre 1-a-1**: en el plan analizado, cada asignatura tiene como máximo
+   un prerequisito (una asignatura específica), nunca prerequisitos por créditos ni por
+   grupos. Esto simplifica el modelo.
+4. **Cupos saturados**: en ciclos avanzados (8-10), muchas secciones ya están al 100% de
+   ocupación en el snapshot del scraping. Por eso `verificar_cupos` NO es hard constraint —
+   se convirtió en soft (`preferencia_cupos`): un cupo lleno hoy puede liberarse en otro
+   turno de matrícula.
+
+---
+
+## 11. Decisiones de diseño relevantes
+
+- **`ContextoAlumno` como objeto de contexto**: encapsula todo lo que las constraints
+  necesitan; evita pasar muchos parámetros sueltos y es inmutable durante la evolución.
+- **Cupos como soft, no hard**: clave para que la herramienta funcione. Con cupos como hard,
+  el 100% de los cromosomas resultaban inválidos en ciclos avanzados.
+- **Cruce uniforme por asignatura**: no hay correlación posicional entre asignaturas, así
+  que el cruce uniforme mezcla mejor el espacio que un cruce de un punto.
+- **Top-K diverso en vez de top-K por fitness**: garantiza que los 5 horarios entregados
+  sean genuinamente distintos, no variantes triviales del mismo.
+- **Matrícula no obligatoria completa**: si una asignatura no tiene secciones disponibles,
+  se omite del horario; el sistema sigue funcionando con las demás.
+
+---
+
+## 12. Lo que falta (roadmap)
+
+| Pendiente | Descripción | Estado |
+|-----------|-------------|--------|
+| **Módulo predictivo de vacantes** | Estimar cuántos cupos quedarán libres al turno del alumno, según su ponderado y datos agregados de la facultad (cantidad de alumnos por ciclo, distribución de ponderados). Refinaría `preferencia_cupos`. | Diseño pendiente — requiere datos agregados de la facultad |
+| **Capa `output/`** | `visualizer.py`: grilla semanal visual. `exporter.py`: exportación a Excel y PDF. | TODO |
+| **Interfaz de usuario** | UI (posiblemente Streamlit) con login, edición de preferencias, elección caché vs scraping, y visualización de los horarios. | Postergada |
+| **Login dinámico** | Reemplazar las credenciales fijas del `.env` por un login que las reciba del usuario. | Planeado |
+
+✅ **Configuración externa** — ya implementada: pesos del fitness y parámetros del GA
+viven en `config_ga.json` (ver §16).
+
+---
+
+## 13. Cómo ejecutar
+
+```bash
+pip install -r requirements.txt
+playwright install
+# Crear .env con LOGIN y PASSWORD del SUM
+python main.py
+```
+
+En Windows, anteponer `PYTHONIOENCODING=utf-8` para la salida con emojis.
+
+---
+
+## 14. Glosario
+
+| Término | Significado |
+|---------|-------------|
+| SUM | Sistema Único de Matrícula de la UNMSM |
+| Sección | Una "instancia" de una asignatura con docente, horario y cupo propios |
+| Bloque horario | Una franja de clase concreta (día + hora inicio + hora fin) |
+| Cromosoma | Un horario completo candidato (solución del GA) |
+| Fitness | Puntaje 0-1 de calidad de un horario |
+| Hard constraint | Restricción inviolable; su incumplimiento descalifica el horario |
+| Soft constraint | Preferencia; su incumplimiento solo baja el puntaje |
+| Ponderado | Promedio ponderado del alumno; determina su turno de matrícula |
+| Turno de matrícula | Franja en que un grupo de alumnos puede matricularse, según ponderado |
+| Elitismo | Preservar los mejores cromosomas intactos entre generaciones |
+| Sección fantasma | Sección del SUM sin horario real (placeholder) |
+
+---
+
+## 15. Contexto académico
+
+Tesis de la Escuela de Ingeniería de Sistemas, UNMSM (plan 2018). El caso de prueba es un
+alumno de ciclo 9 con promedio ponderado 14.4 (tercer turno de matrícula). El aporte
+central de la tesis es modelar la generación de horarios como un problema de optimización
+multi-objetivo resuelto con algoritmo genético, considerando las condiciones reales del
+proceso de matrícula UNMSM — en especial el sistema de turnos por ponderado.
+
+---
+
+## 16. Configuración del sistema (`config_ga.json`)
+
+Los pesos del fitness y los parámetros del GA están externalizados en `config_ga.json`
+(raíz del proyecto), para tunearlos sin tocar código. `config.py` lo carga; si el archivo
+falta o le faltan campos, se completan con defaults.
+
+```json
+{
+  "fitness": {
+    "peso_horarios": 0.4,
+    "peso_docentes": 0.3,
+    "peso_cupos": 0.3,
+    "sub_peso_turno": 0.34,
+    "sub_peso_dias_libres": 0.33,
+    "sub_peso_densidad": 0.33
+  },
+  "ga": {
+    "tamano_poblacion": 100,
+    "generaciones": 50,
+    "tasa_mutacion": 0.15,
+    "tamano_torneo": 3,
+    "elitismo": 5,
+    "top_k": 5,
+    "distancia_minima": 1,
+    "seed": 42
+  },
+  "alumno": { "max_creditos": 24 }
+}
+```
+
+- `fitness.peso_*`: ponderan los 3 soft constraints (idealmente suman 1.0).
+- `fitness.sub_peso_*`: ponderan los 3 sub-criterios de `preferencia_horarios`.
+- `ga.*`: parámetros del algoritmo genético. `seed: null` → corridas no deterministas.
+- `alumno.max_creditos`: tope de créditos por ciclo (hard constraint).
+
+`config_ga.json` SÍ se versiona en git (es config compartida, no datos personales —
+a diferencia de `data/preferencias_*.json` que son personales y están en `.gitignore`).
+
+---
+
+## Archivos de configuración — resumen
+
+| Archivo | Versionado en git | Contenido |
+|---------|-------------------|-----------|
+| `.env` | ❌ No | Credenciales del SUM (LOGIN, PASSWORD) |
+| `config_ga.json` | ✅ Sí | Pesos del fitness y parámetros del GA |
+| `data/preferencias_docentes.json` | ❌ No | Scores de docentes (personal) |
+| `data/preferencias_horarios.json` | ❌ No | Preferencias de horario (personal) |
+| `data/cache.json` | ❌ No | Caché del scraping (datos personales del alumno) |

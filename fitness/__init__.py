@@ -1,4 +1,4 @@
-from .contexto import ContextoAlumno, PreferenciasHorario
+from .contexto import ContextoAlumno, PreferenciasHorario, PesosFitness
 from .preferencias import cargar_scores_docentes, cargar_preferencias_horarios, SCORE_NEUTRAL
 from .hard_constraints import (
     verificar_choques,
@@ -7,11 +7,12 @@ from .hard_constraints import (
     verificar_limite_creditos,
 )
 from .soft_constraints import preferencia_horarios, preferencia_docentes, preferencia_cupos
-from .evaluator import evaluar_fitness, PESO_HORARIOS, PESO_DOCENTES, PESO_CUPOS
+from .evaluator import evaluar_fitness
 
 __all__ = [
     "ContextoAlumno",
     "PreferenciasHorario",
+    "PesosFitness",
     "cargar_scores_docentes",
     "cargar_preferencias_horarios",
     "SCORE_NEUTRAL",
@@ -23,7 +24,4 @@ __all__ = [
     "preferencia_docentes",
     "preferencia_cupos",
     "evaluar_fitness",
-    "PESO_HORARIOS",
-    "PESO_DOCENTES",
-    "PESO_CUPOS",
 ]
