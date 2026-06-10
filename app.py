@@ -230,13 +230,16 @@ def _render_grilla_html(cromosoma) -> str:
     else:
         horas = list(range(HORA_INICIO, HORA_FIN))
 
-    # HTML
+    # HTML — color de texto FIJO en oscuro para celdas pintadas y cabeceras,
+    # asi la grilla es legible tanto en modo claro como oscuro de Streamlit.
+    # Las celdas vacias heredan el color del tema (no se fija).
     html = [
         "<style>",
         ".horario {border-collapse: collapse; width: 100%; font-size: 0.85em; margin: 0.5em 0;}",
-        ".horario th, .horario td {border: 1px solid #888; padding: 6px; text-align: center;}",
-        ".horario th {background: #DDDDDD;}",
-        ".horario td.hora {background: #EEEEEE; font-weight: bold; width: 60px;}",
+        ".horario th, .horario td {border: 1px solid #666; padding: 6px; text-align: center;}",
+        ".horario th {background: #DDDDDD; color: #222;}",
+        ".horario td.hora {background: #EEEEEE; color: #222; font-weight: bold; width: 60px;}",
+        ".horario td.clase {color: #222; font-weight: 500;}",
         "</style>",
         "<table class='horario'>",
         "<tr><th>HORA</th>" + "".join(f"<th>{d}</th>" for d in DIAS_ABREV) + "</tr>",
@@ -247,7 +250,7 @@ def _render_grilla_html(cromosoma) -> str:
             celda = celdas.get((h, d))
             if celda:
                 etiqueta, cod = celda
-                fila.append(f"<td style='background:{color_de[cod]};'>{etiqueta}</td>")
+                fila.append(f"<td class='clase' style='background:{color_de[cod]};'>{etiqueta}</td>")
             else:
                 fila.append("<td></td>")
         html.append("<tr>" + "".join(fila) + "</tr>")
