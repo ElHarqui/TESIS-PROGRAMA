@@ -18,9 +18,9 @@ horarios (aproximadamente 5) ajustados a sus gustos y a las distintas condicione
 se le presentan — en particular el promedio ponderado, que en UNMSM determina el turno
 de matrícula.
 
-**Estado global**: el núcleo funcional (scraping → parsing → GA → 5 horarios) está
-**operativo y probado end-to-end**. Faltan: módulo predictivo de vacantes, capa de
-salida visual/exportable, e interfaz de usuario.
+**Estado global**: el sistema completo (scraping → parsing → GA → 5 horarios → visualización
+y export a Excel/PDF) está **operativo y probado end-to-end**. Falta: módulo predictivo de
+vacantes (en STANDBY por falta de datos, ver §17) e interfaz de usuario.
 
 ---
 
@@ -63,14 +63,17 @@ Aplicación en capas, escrita en **Python 3.13**. Cada capa es un paquete:
 ```
 TESIS PROGRAMA/
 ├── main.py              # Orquestador: scraping → parsing → GA → muestra 5 horarios
+├── config.py            # Loader de config_ga.json
 ├── data/                # Capa de datos: adquisición y transformación
 ├── models/              # Capa de dominio: entidades centrales
 ├── fitness/             # Capa de evaluación: restricciones y scoring
 ├── genetic/             # Capa de algoritmo genético
-└── output/              # Capa de salida (PENDIENTE)
+├── prediccion/          # Módulo predictivo de vacantes (⏸️ STANDBY — no integrado)
+└── output/              # Capa de salida: grilla CLI + Excel + PDF
 ```
 
-**Dependencias actuales**: `playwright` (scraping), `python-dotenv` (variables de entorno).
+**Dependencias actuales**: `playwright` (scraping), `python-dotenv` (variables de entorno),
+`openpyxl` (export Excel), `reportlab` (export PDF), `pdfplumber` (lectura del ranking).
 
 ---
 
@@ -82,7 +85,8 @@ TESIS PROGRAMA/
 | `models/` | ✅ 100% | `BloqueHorario`, `Seccion`, `Cromosoma` con sus métodos y propiedades |
 | `fitness/` | ✅ ~95% | 4 hard constraints + 3 soft constraints + contexto + evaluador |
 | `genetic/` | ✅ 100% | Población inicial + selección + operadores + motor + top-K diverso |
-| `output/` | ❌ 0% | `visualizer.py` y `exporter.py` siguen siendo TODOs |
+| `prediccion/` | ⏸️ STANDBY | Implementado pero **NO integrado**: faltan datos reales (ver §17) |
+| `output/` | ✅ 100% | Grilla CLI + Excel (5 hojas) + PDF (5 páginas, A4 landscape) |
 
 ---
 
@@ -101,7 +105,11 @@ Al correr `python main.py`:
 6. **Generación de población inicial** (`genetic/population.py`): 100 cromosomas aleatorios.
 7. **Ejecución del GA** (`genetic/ga_engine.py`): 50 generaciones de evolución.
 8. **Extracción del top-5 diverso**: selecciona 5 horarios buenos y distintos entre sí.
-9. **Presentación**: imprime los 5 horarios en consola, organizados por día.
+9. **Presentación CLI** (`output/visualizer.py`): imprime cada horario como grilla semanal
+   LUN-SAB × horas + leyenda con asignaturas y docentes.
+10. **Exportación** (`output/exporter.py`): genera `output/horarios.xlsx` (5 hojas, una por
+    horario, con celdas coloreadas por asignatura) y `output/horarios.pdf` (5 páginas A4
+    landscape, una por horario).
 
 Tiempo: ~0.5 s con caché; ~30 s si scrapea (abre navegador).
 
@@ -327,13 +335,15 @@ Cualquier valor `indiferente` neutraliza ese sub-score (cuenta como 0.5).
 
 | Pendiente | Descripción | Estado |
 |-----------|-------------|--------|
-| **Módulo predictivo de vacantes** | Estimar cuántos cupos quedarán libres al turno del alumno, según su ponderado y datos agregados de la facultad (cantidad de alumnos por ciclo, distribución de ponderados). Refinaría `preferencia_cupos`. | Diseño pendiente — requiere datos agregados de la facultad |
-| **Capa `output/`** | `visualizer.py`: grilla semanal visual. `exporter.py`: exportación a Excel y PDF. | TODO |
+| **Módulo predictivo de vacantes** | Estimar cuántos cupos quedarán libres al turno del alumno (refinaría `preferencia_cupos`). Hay código listo en `prediccion/` y feature flag en `config_ga.json`, pero NO está integrado al pipeline hasta tener datos reales (ver §17). | ⏸️ STANDBY |
 | **Interfaz de usuario** | UI (posiblemente Streamlit) con login, edición de preferencias, elección caché vs scraping, y visualización de los horarios. | Postergada |
 | **Login dinámico** | Reemplazar las credenciales fijas del `.env` por un login que las reciba del usuario. | Planeado |
 
 ✅ **Configuración externa** — ya implementada: pesos del fitness y parámetros del GA
 viven en `config_ga.json` (ver §16).
+
+✅ **Capa `output/`** — ya implementada: grilla CLI visual + export a Excel (5 hojas) +
+export a PDF (5 páginas A4 landscape, coloreado por asignatura).
 
 ---
 
@@ -427,3 +437,116 @@ a diferencia de `data/preferencias_*.json` que son personales y están en `.giti
 | `data/preferencias_docentes.json` | ❌ No | Scores de docentes (personal) |
 | `data/preferencias_horarios.json` | ❌ No | Preferencias de horario (personal) |
 | `data/cache.json` | ❌ No | Caché del scraping (datos personales del alumno) |
+| `data/ranking_ponderado_*.csv` | ❌ No | Ranking de la facultad (datos de muchos alumnos) |
+| `pdf/` | ❌ No | PDFs fuente del ranking, historial, etc. |
+
+---
+
+## 17. Módulo predictivo de vacantes (`prediccion/`) — ⏸️ STANDBY (feature flag)
+
+### Estado
+
+Implementado y probado AISLADAMENTE, pero **NO está integrado al pipeline principal**.
+Se controla por la flag `prediccion.activada` en `config_ga.json` (default: `false`).
+Mientras esté en `false`, el sistema funciona sin predictivo y `preferencia_cupos`
+usa el cálculo crudo de disponibilidad.
+
+### Datos disponibles HOY
+
+- ✅ Ranking ponderado **2025-0** (1541 alumnos, 3 escuelas mezcladas).
+- ✅ **875 matriculados en E.P. Ingeniería de Sistemas** para el semestre actual.
+- ❌ Ranking 2026-I filtrado por Ing. Sistemas.
+- ❌ Matrícula real por ciclo.
+- ❌ Encuesta de docentes.
+
+### Por qué no está integrado
+
+El modelo predictivo produciría resultados engañosos sin tres piezas de información
+que aún no tenemos:
+
+1. **Ranking del semestre objetivo (2026-I)** filtrado por Ing. Sistemas. El ranking
+   actual disponible es de 2025-0 y mezcla las 3 escuelas de la facultad (los códigos
+   de alumno no permiten distinguirlas — todos comparten el prefijo `XX200YYY`).
+
+2. **Matrícula real por ciclo en el semestre actual**. La inferencia de ciclo desde el
+   código de alumno asume avance regular (2 ciclos por año), lo cual no refleja
+   atrasados ni adelantados.
+
+3. **Comportamiento multi-ciclo de los alumnos**. En UNMSM un alumno cursa asignaturas
+   de varios ciclos a la vez (ej. el alumno objetivo está en ciclo 9 pero su
+   prematrícula tiene materias de ciclos 8, 9 y 10). El modelo V1 asume que cada
+   alumno cursa solo su ciclo nominal — falso en la realidad.
+
+### Qué está implementado en `prediccion/`
+
+- **`ranking.py`**:
+  - `cargar_ranking(path) → List[AlumnoRanking]` — lee el CSV.
+  - `inferir_anio_ingreso(codigo) → int | None` — extrae año del prefijo del código.
+  - `inferir_ciclo_estimado(codigo, año_referencia) → int | None` — fórmula:
+    `ciclos_completos = (año_ref - año_ingreso) × 2`, ciclo actual = `ciclos_completos + 1`.
+
+- **`demanda.py`** — `EstimadorDemanda` con Enfoque 1+3 (V1 determinista):
+  - **Enfoque 1 (quién compite)**: para una asignatura de ciclo C, los competidores son
+    los alumnos del ranking en ciclo C (ajustado por `delta_ciclos`) con ponderado mayor
+    al del alumno objetivo.
+  - **Enfoque 3 (cómo se reparten)**: la demanda se distribuye entre las secciones de la
+    asignatura proporcionalmente a su `topeAlumnos`.
+  - `score_cupo(seccion) → float 0-1` (probabilidad estimada de conseguir cupo).
+  - `reporte_asignatura(cod)` — diagnóstico con competidores, capacidad, ratio.
+
+### Hallazgo del test E2E con el caso real
+
+Con el ranking 2025-0 disponible, proyectando a 2026-I (`delta_ciclos=2`):
+
+- Las 5 asignaturas de ciclo 9 de la prematrícula muestran **179 competidores** con
+  ponderado mayor al objetivo (14.402) y capacidades totales 136-159 → ratio
+  demanda/capacidad de 1.13 a 1.32. **Score 0.0 (sobre-demanda).** Refleja una
+  realidad esperable: el alumno tendrá problemas para tomar esas asignaturas.
+
+- Las 3 asignaturas de ciclos 8 y 10 dan **0 competidores** porque la inferencia
+  determinista solo produce ciclos impares para 2025-I. Score 1.0 (cupo garantizado),
+  **lo cual es incorrecto**. Esto es la manifestación del problema multi-ciclo
+  descrito arriba.
+
+### Modelo de referencia acordado (V1.5, NO implementado en código todavía)
+
+Cuando se decida activar (cambiar la flag), el modelo discutido fue:
+
+1. **Escalar la distribución de ciclos** del ranking 2025-0 (1541 alumnos) al
+   tamaño real de Ing. Sistemas (875). Factor: `875 / 1541 ≈ 0.568`.
+2. **Banda de ciclo con pesos**: para una asignatura de ciclo C, los alumnos en
+   ciclo nominal (C-delta) compiten con peso `1.0`; los de ciclos vecinos
+   (C-delta ± 1) compiten con peso `0.5`. Refleja que en UNMSM los alumnos cursan
+   asignaturas fuera de su ciclo nominal.
+3. **Proyección de semestre**: ranking 2025-I → 2026-I = `delta_ciclos=2`.
+4. **Reparto entre secciones** proporcional al `topeAlumnos`.
+5. **Disclaimer obligatorio** en el output del top-5 marcando la imprecisión de
+   los datos.
+
+Todos los parámetros del modelo viven en `config_ga.json` → sección `prediccion`:
+
+```json
+"prediccion": {
+  "activada": false,
+  "ranking_path": "data/ranking_ponderado_2025_0.csv",
+  "ranking_anio_referencia": 2025,
+  "semestre_target_delta_ciclos": 2,
+  "total_alumnos_escuela": 875,
+  "total_alumnos_ranking_origen": 1541,
+  "peso_ciclo_nominal": 1.0,
+  "peso_ciclo_vecino": 0.5
+}
+```
+
+### Plan de activación (cuando estén los datos)
+
+1. Cambiar `prediccion.activada` a `true` en `config_ga.json`.
+2. Extender `EstimadorDemanda` para usar la banda con pesos y el factor de escala
+   (hoy usa ciclo exacto sin escala — implementación V1, no V1.5).
+3. Agregar `estimador_demanda: Optional[EstimadorDemanda]` al `ContextoAlumno`.
+4. Modificar `preferencia_cupos` para usar el estimador si la flag está activa
+   (fallback al cálculo crudo si no).
+5. Construir el estimador en `main.py` y pasarlo al contexto.
+6. Mostrar el disclaimer en el output cuando la flag esté activa.
+
+Ver `prediccion/README.md` para más detalle sobre limitaciones y plan de V2.

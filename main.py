@@ -26,6 +26,7 @@ from fitness import (
 )
 from genetic import generar_poblacion_inicial, ejecutar_ga, top_k_diversos
 from genetic.population import _es_seccion_valida
+from output import visualizar_grilla, leyenda_asignaturas, exportar_excel, exportar_pdf
 from config import cargar_config
 
 load_dotenv()
@@ -46,22 +47,10 @@ def _imprimir_horario(rank: int, cromosoma, ctx: ContextoAlumno):
     print(f"\n{'═' * 75}")
     print(f"HORARIO #{rank}   fitness={fit:.4f}   horarios={p_hor:.2f}   docentes={p_doc:.2f}   cupos={p_cup:.2f}   créditos={creditos:.0f}")
     print(f"{'═' * 75}")
-
-    # Aplanar bloques con info de su sección, ordenar por día y hora
-    eventos = []
-    for s in cromosoma.secciones:
-        for b in s.bloques:
-            eventos.append((b, s))
-    eventos.sort(key=lambda e: (ORDEN_DIAS.index(e[0].dia) if e[0].dia in ORDEN_DIAS else 99, e[0].horaInicio))
-
-    dia_actual = None
-    for b, s in eventos:
-        prefijo_dia = b.dia if b.dia != dia_actual else " " * len(b.dia)
-        dia_actual = b.dia
-        cupo = f"{s.matriculados}/{s.topeAlumnos}"
-        print(f"  {prefijo_dia:9} {b.horaInicio}-{b.horaFin}  {s.desAsignatura.strip()[:34]:34}  Sec{s.codSeccion}  cupo={cupo:>6}  [{b.desTipo}]")
-        if b is s.bloques[0]:
-            print(f"  {' '*9}              Docente: {s.docente_completo}")
+    print(visualizar_grilla(cromosoma))
+    print()
+    print("Leyenda:")
+    print(leyenda_asignaturas(cromosoma))
 
 
 async def main():
@@ -180,7 +169,20 @@ async def main():
     if len(top) < ga.top_k:
         print(f"\nℹ️  Solo se encontraron {len(top)} horarios suficientemente diversos (pedidos {ga.top_k}).")
 
-    # ── 9. Endpoints fallidos ─────────────────────────────────
+    # ── 9. Exportar ────────────────────────────────────────────
+    print("\n📤 Exportando horarios...")
+    try:
+        path_xlsx = exportar_excel(top, contexto, "output/horarios.xlsx", asignaturas_omitidas=omitidas)
+        print(f"  ✅ Excel: {path_xlsx}")
+    except Exception as e:
+        print(f"  ❌ Excel falló: {e}")
+    try:
+        path_pdf = exportar_pdf(top, contexto, "output/horarios.pdf", asignaturas_omitidas=omitidas)
+        print(f"  ✅ PDF:   {path_pdf}")
+    except Exception as e:
+        print(f"  ❌ PDF falló: {e}")
+
+    # ── 10. Endpoints fallidos ────────────────────────────────
     if datos_raw.get("errores"):
         print(f"\n⚠️  Endpoints fallidos: {datos_raw['errores']}")
 

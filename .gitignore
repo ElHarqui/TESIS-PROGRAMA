@@ -191,6 +191,10 @@ data/cache.json
 # Preferencias manuales del alumno (docentes, horarios, etc). Personal por alumno.
 data/preferencias_*.json
 
+# Ranking ponderado: datos de 1541 alumnos (codigo + ponderado). No subir a repo publico.
+data/ranking_ponderado_*.csv
+pdf/
+
 # PDFs y documentos personales (historial academico, constancias, etc.)
 HISTORIAL DATA/
 *.pdf

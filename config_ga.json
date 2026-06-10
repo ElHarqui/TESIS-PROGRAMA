@@ -1,5 +1,5 @@
 {
-  "_doc": "Configuracion del sistema. fitness.peso_* ponderan los 3 soft constraints (suman 1.0). fitness.sub_peso_* ponderan los 3 sub-criterios de preferencia_horarios (suman 1.0). ga.* son los parametros del algoritmo genetico. ga.seed = null para corridas no deterministas. alumno.max_creditos = tope de creditos por ciclo.",
+  "_doc": "Configuracion del sistema. fitness.peso_* ponderan los 3 soft constraints (suman 1.0). fitness.sub_peso_* ponderan los 3 sub-criterios de preferencia_horarios (suman 1.0). ga.* son los parametros del algoritmo genetico. ga.seed = null para corridas no deterministas. alumno.max_creditos = tope de creditos por ciclo. prediccion.activada = false por defecto; cuando este en true el sistema usara el modulo predictivo de vacantes (ver prediccion/README.md).",
   "fitness": {
     "peso_horarios": 0.4,
     "peso_docentes": 0.3,
@@ -20,5 +20,15 @@
   },
   "alumno": {
     "max_creditos": 24
+  },
+  "prediccion": {
+    "activada": false,
+    "ranking_path": "data/ranking_ponderado_2025_0.csv",
+    "ranking_anio_referencia": 2025,
+    "semestre_target_delta_ciclos": 2,
+    "total_alumnos_escuela": 875,
+    "total_alumnos_ranking_origen": 1541,
+    "peso_ciclo_nominal": 1.0,
+    "peso_ciclo_vecino": 0.5
   }
 }

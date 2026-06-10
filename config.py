@@ -26,11 +26,40 @@ class ParametrosGA:
 
 
 @dataclass
+class ConfigPrediccion:
+    """
+    Configuración del módulo predictivo de vacantes (`prediccion/`).
+
+    Cuando `activada=False` (default) el sistema NO usa el modulo predictivo:
+    `preferencia_cupos` funciona con el calculo crudo de disponibilidad.
+
+    Cuando se cambie a `True` (requiere implementar la integracion en
+    `preferencia_cupos` y `main.py`), el resto de los campos parametrizan el
+    modelo V1.5 documentado en `prediccion/README.md`.
+    """
+    activada: bool = False
+    ranking_path: str = "data/ranking_ponderado_2025_0.csv"
+    ranking_anio_referencia: int = 2025
+    # Cuantos ciclos hay que sumar a un alumno del ranking para proyectarlo al
+    # semestre objetivo. Ranking 2025-I -> 2026-I = +2 ciclos.
+    semestre_target_delta_ciclos: int = 2
+    # Para escalar la distribucion del ranking (3 escuelas) a la escuela del alumno.
+    total_alumnos_escuela: int = 875        # Ing. Sistemas en 2026-I
+    total_alumnos_ranking_origen: int = 1541  # alumnos del ranking 2025-0
+    # Pesos de competencia por ciclo (V1.5 Opcion C).
+    # El alumno cuenta con peso 1.0 para asignaturas de su ciclo nominal,
+    # y peso 0.5 para asignaturas de ciclos vecinos (±1).
+    peso_ciclo_nominal: float = 1.0
+    peso_ciclo_vecino: float = 0.5
+
+
+@dataclass
 class Config:
     """Configuración completa del sistema."""
     pesos: PesosFitness = field(default_factory=PesosFitness)
     ga: ParametrosGA = field(default_factory=ParametrosGA)
     max_creditos: float = 24.0
+    prediccion: ConfigPrediccion = field(default_factory=ConfigPrediccion)
 
 
 def cargar_config(path: str = "config_ga.json") -> Config:
@@ -55,6 +84,7 @@ def cargar_config(path: str = "config_ga.json") -> Config:
     fit = data.get("fitness", {})
     ga = data.get("ga", {})
     alu = data.get("alumno", {})
+    pred = data.get("prediccion", {})
 
     defaults_pesos = PesosFitness()
     pesos = PesosFitness(
@@ -78,8 +108,21 @@ def cargar_config(path: str = "config_ga.json") -> Config:
         seed=ga.get("seed", defaults_ga.seed),
     )
 
+    defaults_pred = ConfigPrediccion()
+    prediccion_cfg = ConfigPrediccion(
+        activada=pred.get("activada", defaults_pred.activada),
+        ranking_path=pred.get("ranking_path", defaults_pred.ranking_path),
+        ranking_anio_referencia=pred.get("ranking_anio_referencia", defaults_pred.ranking_anio_referencia),
+        semestre_target_delta_ciclos=pred.get("semestre_target_delta_ciclos", defaults_pred.semestre_target_delta_ciclos),
+        total_alumnos_escuela=pred.get("total_alumnos_escuela", defaults_pred.total_alumnos_escuela),
+        total_alumnos_ranking_origen=pred.get("total_alumnos_ranking_origen", defaults_pred.total_alumnos_ranking_origen),
+        peso_ciclo_nominal=pred.get("peso_ciclo_nominal", defaults_pred.peso_ciclo_nominal),
+        peso_ciclo_vecino=pred.get("peso_ciclo_vecino", defaults_pred.peso_ciclo_vecino),
+    )
+
     return Config(
         pesos=pesos,
         ga=parametros,
         max_creditos=alu.get("max_creditos", 24.0),
+        prediccion=prediccion_cfg,
     )
