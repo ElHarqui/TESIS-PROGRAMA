@@ -53,6 +53,31 @@ def distancia_cromosomas(c1: Cromosoma, c2: Cromosoma) -> int:
     )
 
 
+def _deduplicar_estricto(
+    poblacion: Sequence[Cromosoma],
+    fitness: Sequence[float],
+) -> tuple:
+    """
+    Elimina duplicados estrictos (cromosomas con distancia == 0 entre sí).
+
+    Conserva la primera aparición de cada cromosoma único. Defensa contra el caso
+    típico del GA convergente: cuando el espacio de búsqueda es pequeño o el GA
+    converge fuerte, la población final tiende a tener varias copias del mismo
+    óptimo. Sin dedup, esas copias se cuelan al output y los "5 horarios" salen
+    visualmente idénticos.
+
+    Devuelve (poblacion_unica, fitness_de_esos).
+    """
+    unicos: List[Cromosoma] = []
+    fitness_unicos: List[float] = []
+    for c, f in zip(poblacion, fitness):
+        if any(distancia_cromosomas(c, u) == 0 for u in unicos):
+            continue
+        unicos.append(c)
+        fitness_unicos.append(f)
+    return unicos, fitness_unicos
+
+
 def top_k_diversos(
     poblacion: Sequence[Cromosoma],
     fitness: Sequence[float],
@@ -62,26 +87,36 @@ def top_k_diversos(
     """
     Selecciona K cromosomas con fitness alto Y suficientemente distintos entre sí.
 
-    Algoritmo greedy:
-    1. Filtra cromosomas con fitness > 0
-    2. Ordena por fitness descendente
-    3. Toma el mejor sí o sí
-    4. Para cada siguiente candidato, lo incluye solo si su distancia a TODOS
-       los ya elegidos es >= distancia_minima
-    5. Para cuando tiene K o se agotan candidatos
+    Algoritmo:
+    1. Filtra cromosomas con fitness > 0.
+    2. Dedup estricto: elimina duplicados (distancia == 0) por seguridad.
+    3. Ordena por fitness descendente.
+    4. Toma el mejor sí o sí.
+    5. Para cada siguiente candidato, lo incluye solo si su distancia a TODOS
+       los ya elegidos es >= distancia_minima.
+    6. Para cuando tiene K o se agotan candidatos.
 
     `distancia_minima=1`: al menos UNA sección distinta. Subir el valor fuerza
     horarios más radicalmente diferentes.
 
-    Si no hay K cromosomas suficientemente diversos, devuelve menos.
+    Si no hay K cromosomas suficientemente diversos, devuelve MENOS. En el caso
+    extremo de un espacio de búsqueda con una sola solución óptima, devuelve 1
+    (el caller debe avisar al usuario que no hay más combinaciones posibles).
     """
-    candidatos = sorted(
-        ((c, f) for c, f in zip(poblacion, fitness) if f > 0),
-        key=lambda x: -x[1],
-    )
-    if not candidatos:
+    # Solo cromosomas válidos
+    poblacion_valida = [c for c, f in zip(poblacion, fitness) if f > 0]
+    fitness_valido = [f for f in fitness if f > 0]
+    if not poblacion_valida:
         return []
 
+    # Defensa contra GA convergente: eliminar duplicados estrictos
+    poblacion_valida, fitness_valido = _deduplicar_estricto(poblacion_valida, fitness_valido)
+
+    # Ordenar y aplicar greedy con distancia mínima
+    candidatos = sorted(
+        zip(poblacion_valida, fitness_valido),
+        key=lambda x: -x[1],
+    )
     elegidos = [candidatos[0][0]]
     for cand, _ in candidatos[1:]:
         if len(elegidos) >= k:

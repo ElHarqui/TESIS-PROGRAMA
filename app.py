@@ -374,31 +374,49 @@ def _tab_horarios():
                 )
                 st.write(f"- **{cod}** — {desc}")
 
-    # Pestañas por horario
+    # Render por horario
     horarios = st.session_state.horarios
+    k_pedido = cargar_config().ga.top_k
     scores = cargar_scores_docentes()
     prefs = cargar_preferencias_horarios()
     contexto = _construir_contexto(scores, prefs)
 
-    tabs = st.tabs([f"Horario #{i+1}" for i in range(len(horarios))])
-    for i, (tab, c) in enumerate(zip(tabs, horarios)):
-        with tab:
-            fit = evaluar_fitness(c, contexto)
-            p_hor = preferencia_horarios(c, contexto)
-            p_doc = preferencia_docentes(c, contexto)
-            p_cup = preferencia_cupos(c, contexto)
-            creditos = sum(s.creditos for s in c.secciones)
+    def _render_uno(c):
+        fit = evaluar_fitness(c, contexto)
+        p_hor = preferencia_horarios(c, contexto)
+        p_doc = preferencia_docentes(c, contexto)
+        p_cup = preferencia_cupos(c, contexto)
+        creditos = sum(s.creditos for s in c.secciones)
 
-            m1, m2, m3, m4, m5 = st.columns(5)
-            m1.metric("Fitness", f"{fit:.4f}")
-            m2.metric("Horarios", f"{p_hor:.2f}")
-            m3.metric("Docentes", f"{p_doc:.2f}")
-            m4.metric("Cupos", f"{p_cup:.2f}")
-            m5.metric("Créditos", f"{creditos:.0f}")
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("Fitness", f"{fit:.4f}")
+        m2.metric("Horarios", f"{p_hor:.2f}")
+        m3.metric("Docentes", f"{p_doc:.2f}")
+        m4.metric("Cupos", f"{p_cup:.2f}")
+        m5.metric("Créditos", f"{creditos:.0f}")
 
-            st.markdown(_render_grilla_html(c), unsafe_allow_html=True)
-            st.subheader("Leyenda")
-            _render_leyenda(c)
+        st.markdown(_render_grilla_html(c), unsafe_allow_html=True)
+        st.subheader("Leyenda")
+        _render_leyenda(c)
+
+    if len(horarios) == 1:
+        st.warning(
+            f"ℹ️ **Solo hay UN horario posible** que cumple todas las restricciones de tu "
+            f"prematrícula. No existen más combinaciones distintas (se pidieron {k_pedido}, "
+            f"pero el espacio de búsqueda no permite más variantes)."
+        )
+        st.subheader("Horario óptimo único")
+        _render_uno(horarios[0])
+    else:
+        if len(horarios) < k_pedido:
+            st.info(
+                f"ℹ️ Solo se encontraron **{len(horarios)} horarios suficientemente distintos** "
+                f"(se pidieron {k_pedido}). El espacio de búsqueda de tu prematrícula no permite más variantes."
+            )
+        tabs = st.tabs([f"Horario #{i+1}" for i in range(len(horarios))])
+        for tab, c in zip(tabs, horarios):
+            with tab:
+                _render_uno(c)
 
     # Descargas
     st.divider()

@@ -162,12 +162,20 @@ async def main():
         print("   Probables causas: choques inevitables o créditos excedidos.")
         return
 
-    print(f"\n🎯 Top-{len(top)} horarios diversos:")
-    for rank, c in enumerate(top, 1):
-        _imprimir_horario(rank, c, contexto)
+    # Caso especial: solo hay UN horario óptimo único.
+    if len(top) == 1:
+        print(f"\nℹ️  Solo hay UN horario posible que cumple todas las restricciones.")
+        print(f"   No existen más combinaciones distintas con tu prematrícula y las secciones disponibles.")
+        print(f"   (Se solicitaron {ga.top_k}, pero el espacio de búsqueda no permite más.)\n")
+        _imprimir_horario(1, top[0], contexto)
+    else:
+        print(f"\n🎯 Top-{len(top)} horarios diversos:")
+        for rank, c in enumerate(top, 1):
+            _imprimir_horario(rank, c, contexto)
 
-    if len(top) < ga.top_k:
-        print(f"\nℹ️  Solo se encontraron {len(top)} horarios suficientemente diversos (pedidos {ga.top_k}).")
+        if len(top) < ga.top_k:
+            print(f"\nℹ️  Solo se encontraron {len(top)} horarios suficientemente distintos (pedidos {ga.top_k}).")
+            print(f"   El espacio de búsqueda de tu prematrícula no permite más variantes.")
 
     # ── 9. Exportar ────────────────────────────────────────────
     print("\n📤 Exportando horarios...")
