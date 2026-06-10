@@ -19,8 +19,9 @@ se le presentan — en particular el promedio ponderado, que en UNMSM determina 
 de matrícula.
 
 **Estado global**: el sistema completo (scraping → parsing → GA → 5 horarios → visualización
-y export a Excel/PDF) está **operativo y probado end-to-end**. Falta: módulo predictivo de
-vacantes (en STANDBY por falta de datos, ver §17) e interfaz de usuario.
+y export a Excel/PDF) está **operativo y probado end-to-end**. Se entrega como CLI
+(`python main.py`) y como **interfaz web Streamlit** (`streamlit run app.py`). Falta:
+módulo predictivo de vacantes (en STANDBY por falta de datos, ver §17).
 
 ---
 
@@ -62,7 +63,8 @@ Aplicación en capas, escrita en **Python 3.13**. Cada capa es un paquete:
 
 ```
 TESIS PROGRAMA/
-├── main.py              # Orquestador: scraping → parsing → GA → muestra 5 horarios
+├── main.py              # CLI: scraping → parsing → GA → muestra 5 horarios
+├── app.py               # UI Streamlit: login + horarios + preferencias + descargas
 ├── config.py            # Loader de config_ga.json
 ├── data/                # Capa de datos: adquisición y transformación
 ├── models/              # Capa de dominio: entidades centrales
@@ -73,7 +75,8 @@ TESIS PROGRAMA/
 ```
 
 **Dependencias actuales**: `playwright` (scraping), `python-dotenv` (variables de entorno),
-`openpyxl` (export Excel), `reportlab` (export PDF), `pdfplumber` (lectura del ranking).
+`openpyxl` (export Excel), `reportlab` (export PDF), `pdfplumber` (lectura del ranking),
+`streamlit` (UI web), `nest-asyncio` (loops anidados para Playwright dentro de Streamlit).
 
 ---
 
@@ -87,6 +90,7 @@ TESIS PROGRAMA/
 | `genetic/` | ✅ 100% | Población inicial + selección + operadores + motor + top-K diverso |
 | `prediccion/` | ⏸️ STANDBY | Implementado pero **NO integrado**: faltan datos reales (ver §17) |
 | `output/` | ✅ 100% | Grilla CLI + Excel (5 hojas) + PDF (5 páginas, A4 landscape) |
+| `app.py` (UI) | ✅ 100% | Streamlit: login, dashboard de horarios, edición de preferencias, descargas |
 
 ---
 
@@ -336,8 +340,11 @@ Cualquier valor `indiferente` neutraliza ese sub-score (cuenta como 0.5).
 | Pendiente | Descripción | Estado |
 |-----------|-------------|--------|
 | **Módulo predictivo de vacantes** | Estimar cuántos cupos quedarán libres al turno del alumno (refinaría `preferencia_cupos`). Hay código listo en `prediccion/` y feature flag en `config_ga.json`, pero NO está integrado al pipeline hasta tener datos reales (ver §17). | ⏸️ STANDBY |
-| **Interfaz de usuario** | UI (posiblemente Streamlit) con login, edición de preferencias, elección caché vs scraping, y visualización de los horarios. | Postergada |
-| **Login dinámico** | Reemplazar las credenciales fijas del `.env` por un login que las reciba del usuario. | Planeado |
+
+✅ **Login dinámico** — implementado en `app.py`: form de credenciales que reemplaza el
+`.env` (que ahora actúa solo como fallback).
+
+✅ **Interfaz de usuario** — implementada en `app.py` con Streamlit. Ver §18.
 
 ✅ **Configuración externa** — ya implementada: pesos del fitness y parámetros del GA
 viven en `config_ga.json` (ver §16).
@@ -550,3 +557,63 @@ Todos los parámetros del modelo viven en `config_ga.json` → sección `predicc
 6. Mostrar el disclaimer en el output cuando la flag esté activa.
 
 Ver `prediccion/README.md` para más detalle sobre limitaciones y plan de V2.
+
+---
+
+## 18. Interfaz web (`app.py`) — Streamlit
+
+### Cómo ejecutar
+```bash
+pip install -r requirements.txt
+playwright install
+streamlit run app.py
+```
+
+Abre el navegador en `http://localhost:8501`.
+
+### Layout
+
+- **Sidebar**:
+  - Si no hay sesión activa: formulario de login (usuario + contraseña). Pre-rellena
+    con `LOGIN` y `PASSWORD` del `.env` si existen (fallback).
+  - Si hay sesión: muestra nombre/código del alumno + botón "Re-scrapear (forzar)" +
+    "Cerrar sesión".
+  - Checkbox **"Forzar re-scraping"** antes de conectar para ignorar caché.
+
+- **Pestañas principales** (después del login):
+
+  1. **📅 Mis horarios**:
+     - Botón "🧬 Generar 5 horarios" → ejecuta el GA (~0.3s con caché).
+     - Muestra status: válidos al inicio → válidos al final, duración.
+     - Asignaturas omitidas en un expander (si las hay).
+     - **Pestaña por horario** con: 5 métricas (fitness, horarios, docentes, cupos,
+       créditos), **grilla HTML coloreada** y tabla-leyenda.
+     - **Descargas**: botones `⬇️ Excel` y `⬇️ PDF` con los binarios reales.
+
+  2. **⚙️ Preferencias**:
+     - **Sub-pestaña Docentes**: un slider 0-1 por cada docente único en la
+       prematrícula (lista construida desde el SUM). Guarda a
+       `data/preferencias_docentes.json`.
+     - **Sub-pestaña Horarios**: selectbox turno preferido, multiselect días libres,
+       selectbox densidad. Guarda a `data/preferencias_horarios.json`.
+
+  3. **🎓 Datos académicos**:
+     - Métricas (ciclo, ponderado, plan) + escuela/facultad/situación.
+     - Tabla de prematrícula.
+     - Expander: tabla del plan completo (con prerequisitos).
+     - Expander: tabla del historial completo (con notas).
+
+### Decisiones técnicas
+
+- **`nest-asyncio`**: Playwright es async; Streamlit corre en su propio loop.
+  `nest_asyncio.apply()` permite anidar loops para que `asyncio.run(...)` funcione
+  desde callbacks de Streamlit.
+- **`session_state`** persiste durante la sesión del usuario: `datos_raw`, `alumno`,
+  `plan`, `secciones`, `prematricula`, `historial`, `horarios` (cromosomas del top-K),
+  `fitness_fin`, `omitidas`, etc.
+- **Grilla HTML inline**: la grilla del horario se renderiza con `st.markdown(html,
+  unsafe_allow_html=True)` para tener control fino sobre colores por asignatura
+  (paleta de 10). Sin dependencias adicionales tipo `streamlit-aggrid`.
+- **Single-user**: la UI asume un solo alumno por instancia (mismo `data/cache.json`
+  compartido). Multi-user requeriría un cache por sesión, fuera del scope V1.
+- **Cierre de sesión**: limpia `session_state` y vuelve a la pantalla de login.
