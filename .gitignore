@@ -208,7 +208,7 @@ output/*.pdf
 output/*.png
 output/*.html
 
-# Contexto orientado a redaccion academica de la tesis. Personal del autor;
-# no se versiona porque encuadra material destinado a redactar el informe
-# de tesis junto a un asistente LLM.
-CONTEXTO_TESIS.md
+# Documentos de contexto (para asistentes LLM, redaccion de tesis, o
+# snapshots historicos del avance del proyecto). Personales del autor;
+# no se versionan. El README.md queda como unica documentacion publica.
+CONTEXTO_*.md
