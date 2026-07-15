@@ -5,6 +5,8 @@ from .hard_constraints import (
     verificar_prerequisitos,
     verificar_asignaturas_unicas,
     verificar_limite_creditos,
+    verificar_dias_libres_obligatorios,
+    verificar_rango_horario,
 )
 from .soft_constraints import preferencia_horarios, preferencia_docentes, preferencia_cupos
 
@@ -12,6 +14,14 @@ from .soft_constraints import preferencia_horarios, preferencia_docentes, prefer
 def evaluar_fitness(cromosoma: Cromosoma, contexto: ContextoAlumno) -> float:
     """
     Fitness 0-1 de un cromosoma. 0.0 si viola algún hard constraint.
+
+    Orden de checks (cortocircuito al primer fallo):
+    1. Choques horarios (barato, filtra la mayoría).
+    2. Asignaturas únicas.
+    3. Límite de créditos.
+    4. Prerequisitos aprobados.
+    5. Días obligatoriamente libres (preferencia HARD del alumno).
+    6. Rango horario obligatorio (preferencia HARD del alumno).
 
     Los pesos de los 3 soft constraints viven en contexto.pesos
     (externalizables vía config_ga.json).
@@ -23,6 +33,10 @@ def evaluar_fitness(cromosoma: Cromosoma, contexto: ContextoAlumno) -> float:
     if not verificar_limite_creditos(cromosoma, contexto):
         return 0.0
     if not verificar_prerequisitos(cromosoma, contexto):
+        return 0.0
+    if not verificar_dias_libres_obligatorios(cromosoma, contexto):
+        return 0.0
+    if not verificar_rango_horario(cromosoma, contexto):
         return 0.0
 
     pesos = contexto.pesos

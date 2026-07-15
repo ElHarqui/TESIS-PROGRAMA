@@ -160,6 +160,14 @@ Son violaciones físicamente imposibles, no negociables:
 | `verificar_asignaturas_unicas` | Hay dos secciones de la misma asignatura |
 | `verificar_limite_creditos` | La suma de créditos supera el máximo (24) |
 | `verificar_prerequisitos` | Una asignatura tiene prerequisito no aprobado |
+| `verificar_dias_libres_obligatorios` | Un bloque cae en un día marcado como obligatoriamente libre por el alumno |
+| `verificar_rango_horario` | Un bloque inicia antes de `hora_min` o termina después de `hora_max` |
+
+Los dos últimos son **restricciones estrictas configurables por el alumno**
+(distintas de las cuatro primeras, que son intrínsecas al problema). Se activan
+cuando el alumno completa los campos correspondientes en
+`preferencias_horarios.json` (o en la sub-pestaña "Preferencias" de la UI).
+Si no se configuran (defaults: lista vacía y `None`), no aplican y no descalifican.
 
 ### 7.2 Soft constraints (`fitness/soft_constraints.py`)
 
@@ -280,14 +288,32 @@ Score 0.0 = evitar, 0.5 = neutral (default si no está mapeado), 1.0 = preferido
 {
   "turno_preferido": "noche",
   "dias_libres_deseados": ["SABADO"],
-  "densidad": "compacto"
+  "densidad": "compacto",
+
+  "dias_libres_obligatorios": ["DOMINGO"],
+  "hora_min": "08:00",
+  "hora_max": "22:00"
 }
 ```
+
+**Campos SOFT** (penalizan el fitness, no descalifican):
 - `turno_preferido`: `manana` | `tarde` | `noche` | `indiferente`.
 - `dias_libres_deseados`: lista de días en mayúsculas.
 - `densidad`: `compacto` | `distribuido` | `indiferente`.
 
 Cualquier valor `indiferente` neutraliza ese sub-score (cuenta como 0.5).
+
+**Campos HARD** (descalifican al cromosoma que las viole):
+
+- `dias_libres_obligatorios`: lista de días donde NO se acepta ningún bloque.
+  Vacío = sin restricción.
+- `hora_min`: hora mínima `"HH:MM"` antes de la cual no se acepta ningún bloque.
+  `null` o ausente = sin restricción.
+- `hora_max`: hora máxima `"HH:MM"` después de la cual no se acepta ningún bloque.
+  `null` o ausente = sin restricción.
+
+Los campos HARD son opcionales: JSONs viejos sin ellos siguen funcionando sin cambios
+(defaults: lista vacía y `None`).
 
 ---
 

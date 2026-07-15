@@ -27,15 +27,27 @@ class PreferenciasHorario:
     """
     Preferencias del alumno sobre la distribución horaria de su semana.
 
+    SOFT (afectan al fitness, no descalifican):
     - turno_preferido: en qué franja del día prefiere tener clases.
     - dias_libres_deseados: lista de días que prefiere SIN clase (ej. ["SABADO"]).
     - densidad: compacto (clases agrupadas en pocos días) o distribuido (repartidas).
-
     Valores "indiferente" desactivan el sub-score (cuenta como neutral 0.5).
+
+    HARD (descalifican al cromosoma que las viole):
+    - dias_libres_obligatorios: lista de días donde NO se acepta ningún bloque.
+      Lista vacía = sin restricción.
+    - hora_min: hora mínima en formato "HH:MM" antes de la cual no se acepta ningún
+      bloque. None = sin restricción por abajo.
+    - hora_max: hora máxima en formato "HH:MM" después de la cual no se acepta
+      ningún bloque. None = sin restricción por arriba.
     """
     turno_preferido: str = TURNO_INDIFERENTE
     dias_libres_deseados: List[str] = field(default_factory=list)
     densidad: str = DENSIDAD_INDIFERENTE
+    # Nuevos HARD constraints (agregados sin romper compatibilidad con JSONs viejos)
+    dias_libres_obligatorios: List[str] = field(default_factory=list)
+    hora_min: Optional[str] = None
+    hora_max: Optional[str] = None
 
 
 @dataclass

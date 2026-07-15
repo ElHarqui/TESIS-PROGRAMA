@@ -14,6 +14,7 @@ import asyncio
 import json
 import os
 import time
+from datetime import time as dt_time
 from pathlib import Path
 from typing import List
 
@@ -356,6 +357,17 @@ def _correr_ga(contexto: ContextoAlumno):
 # ─────────────────────────────────────────────────────────────────────
 # COMPONENTES DE UI
 # ─────────────────────────────────────────────────────────────────────
+
+def _parsear_hhmm(hhmm):
+    """Convierte 'HH:MM' → datetime.time. Devuelve None si el input es falsy o inválido."""
+    if not hhmm:
+        return None
+    try:
+        h, m = map(int, str(hhmm).split(":"))
+        return dt_time(h, m)
+    except (ValueError, AttributeError):
+        return None
+
 
 def _apellido_corto(apePaterno: str, max_chars: int = 14) -> str:
     """Trunca el apellido paterno para caber en una celda de grilla."""
@@ -774,6 +786,9 @@ def _tab_preferencias():
     # ───── Horarios ─────
     with sub_hor:
         prefs_actual = cargar_preferencias_horarios()
+
+        # ── Preferencias SOFT (penalizan el fitness) ──
+        st.markdown("##### Preferencias (afectan el puntaje del horario)")
         turnos = [TURNO_INDIFERENTE, TURNO_MANANA, TURNO_TARDE, TURNO_NOCHE]
         turno_idx = turnos.index(prefs_actual.turno_preferido) if prefs_actual.turno_preferido in turnos else 0
         nuevo_turno = st.selectbox(
@@ -787,6 +802,8 @@ def _tab_preferencias():
             "Días libres deseados (sin clase)",
             options=DIAS,
             default=prefs_actual.dias_libres_deseados,
+            help="Preferís que estos días queden libres, pero el sistema puede "
+                 "elegir asignarlos si mejora el balance general.",
         )
 
         densidades = [DENSIDAD_INDIFERENTE, DENSIDAD_COMPACTO, DENSIDAD_DISTRIBUIDO]
@@ -798,12 +815,59 @@ def _tab_preferencias():
             help="Compacto = clases en pocos días; Distribuido = repartidas",
         )
 
+        # ── Restricciones HARD (descalifican horarios que las violen) ──
+        st.markdown("---")
+        st.markdown("##### 🔒 Restricciones estrictas (descartan horarios que las violen)")
+        st.caption(
+            "⚠️ Cuidado: si marcás muchas restricciones estrictas puede que no "
+            "existan horarios posibles con tu prematrícula. En ese caso el "
+            "sistema te va a avisar."
+        )
+
+        nuevos_dias_hard = st.multiselect(
+            "🔒 Días obligatoriamente libres",
+            options=DIAS,
+            default=prefs_actual.dias_libres_obligatorios,
+            help="Ningún horario generado tendrá clase en estos días. Se aplica "
+                 "como regla dura (no como preferencia).",
+        )
+
+        col_min, col_max = st.columns(2)
+        with col_min:
+            usa_min = st.checkbox(
+                "Aplicar hora mínima",
+                value=prefs_actual.hora_min is not None,
+                help="Si está activo, no se aceptarán bloques que empiecen antes de la hora indicada.",
+            )
+            if usa_min:
+                default_min = _parsear_hhmm(prefs_actual.hora_min) or dt_time(8, 0)
+                nueva_hmin_t = st.time_input("🔒 Hora mínima obligatoria", value=default_min, step=1800)
+                nueva_hora_min = f"{nueva_hmin_t.hour:02d}:{nueva_hmin_t.minute:02d}"
+            else:
+                nueva_hora_min = None
+        with col_max:
+            usa_max = st.checkbox(
+                "Aplicar hora máxima",
+                value=prefs_actual.hora_max is not None,
+                help="Si está activo, no se aceptarán bloques que terminen después de la hora indicada.",
+            )
+            if usa_max:
+                default_max = _parsear_hhmm(prefs_actual.hora_max) or dt_time(22, 0)
+                nueva_hmax_t = st.time_input("🔒 Hora máxima obligatoria", value=default_max, step=1800)
+                nueva_hora_max = f"{nueva_hmax_t.hour:02d}:{nueva_hmax_t.minute:02d}"
+            else:
+                nueva_hora_max = None
+
+        st.markdown("---")
         if st.button("💾 Guardar preferencias de horario", type="primary", key="save_hor"):
             Path("data/preferencias_horarios.json").write_text(
                 json.dumps({
                     "turno_preferido": nuevo_turno,
                     "dias_libres_deseados": nuevos_dias,
                     "densidad": nueva_dens,
+                    "dias_libres_obligatorios": nuevos_dias_hard,
+                    "hora_min": nueva_hora_min,
+                    "hora_max": nueva_hora_max,
                 }, indent=2, ensure_ascii=False),
                 encoding="utf-8",
             )

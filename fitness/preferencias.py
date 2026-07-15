@@ -32,15 +32,22 @@ def cargar_scores_docentes(path: str = "data/preferencias_docentes.json") -> Dic
 def cargar_preferencias_horarios(path: str = "data/preferencias_horarios.json") -> PreferenciasHorario:
     """
     Carga preferencias de horario desde JSON. Si el archivo no existe o no tiene los
-    campos, devuelve un PreferenciasHorario con defaults "indiferente" (todos los
-    sub-scores caen a neutral 0.5).
+    campos, devuelve un PreferenciasHorario con defaults (SOFT en "indiferente",
+    HARD sin restricción).
 
     Formato esperado:
         {
           "turno_preferido": "manana"|"tarde"|"noche"|"indiferente",
           "dias_libres_deseados": ["SABADO", "DOMINGO"],
-          "densidad": "compacto"|"distribuido"|"indiferente"
+          "densidad": "compacto"|"distribuido"|"indiferente",
+
+          "dias_libres_obligatorios": ["DOMINGO"],   // HARD
+          "hora_min": "08:00",                        // HARD, null = sin límite
+          "hora_max": "20:00"                         // HARD, null = sin límite
         }
+
+    Los campos HARD son opcionales: si faltan, se defaultean a lista vacía o None
+    (sin restricción). Backward-compat con JSONs viejos.
     """
     p = Path(path)
     if not p.exists():
@@ -51,4 +58,7 @@ def cargar_preferencias_horarios(path: str = "data/preferencias_horarios.json") 
         turno_preferido=data.get("turno_preferido", "indiferente"),
         dias_libres_deseados=[d.upper() for d in data.get("dias_libres_deseados", [])],
         densidad=data.get("densidad", "indiferente"),
+        dias_libres_obligatorios=[d.upper() for d in data.get("dias_libres_obligatorios", [])],
+        hora_min=data.get("hora_min") or None,
+        hora_max=data.get("hora_max") or None,
     )

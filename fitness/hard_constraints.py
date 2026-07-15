@@ -35,3 +35,59 @@ def verificar_limite_creditos(cromosoma: Cromosoma, contexto: ContextoAlumno) ->
     """True si la suma de créditos del cromosoma no excede el tope del alumno."""
     total = sum(s.creditos for s in cromosoma.secciones)
     return total <= contexto.max_creditos
+
+
+def verificar_dias_libres_obligatorios(cromosoma: Cromosoma, contexto: ContextoAlumno) -> bool:
+    """
+    True si NINGÚN bloque del cromosoma cae en un día marcado como obligatoriamente libre.
+
+    Los días obligatoriamente libres se configuran en preferencias_horarios.json →
+    `dias_libres_obligatorios` (ej. `["SABADO", "DOMINGO"]`). Es distinto de la
+    preferencia SOFT `dias_libres_deseados` (esta descalifica; aquella solo penaliza).
+
+    Lista vacía = sin restricción (siempre True).
+    """
+    obligatorios = set(contexto.prefs_horario.dias_libres_obligatorios)
+    if not obligatorios:
+        return True
+    for s in cromosoma.secciones:
+        for b in s.bloques:
+            if b.dia in obligatorios:
+                return False
+    return True
+
+
+def _hhmm_a_minutos(hhmm: str) -> int:
+    """Convierte 'HH:MM' a minutos desde medianoche. Consistente con BloqueHorario."""
+    h, m = map(int, hhmm.split(":"))
+    return h * 60 + m
+
+
+def verificar_rango_horario(cromosoma: Cromosoma, contexto: ContextoAlumno) -> bool:
+    """
+    True si TODOS los bloques del cromosoma caen dentro del rango horario obligatorio
+    [hora_min, hora_max].
+
+    - Si `hora_min` es None, no se aplica límite inferior.
+    - Si `hora_max` es None, no se aplica límite superior.
+    - Ambos None = sin restricción (siempre True).
+
+    Un bloque cumple si `hora_inicio >= hora_min` Y `hora_fin <= hora_max`.
+    """
+    prefs = contexto.prefs_horario
+    if prefs.hora_min is None and prefs.hora_max is None:
+        return True
+    min_int = _hhmm_a_minutos(prefs.hora_min) if prefs.hora_min else None
+    max_int = _hhmm_a_minutos(prefs.hora_max) if prefs.hora_max else None
+
+    for s in cromosoma.secciones:
+        for b in s.bloques:
+            if b.horaInicio is None or b.horaFin is None:
+                # Bloque fantasma sin horario real: no se puede validar rango.
+                # generar_poblacion_inicial ya los filtra, pero defendemos.
+                continue
+            if min_int is not None and b.hora_inicio_int < min_int:
+                return False
+            if max_int is not None and b.hora_fin_int > max_int:
+                return False
+    return True
