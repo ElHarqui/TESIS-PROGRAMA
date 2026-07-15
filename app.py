@@ -344,23 +344,48 @@ def _correr_ga(contexto: ContextoAlumno):
 # COMPONENTES DE UI
 # ─────────────────────────────────────────────────────────────────────
 
+def _apellido_corto(apePaterno: str, max_chars: int = 14) -> str:
+    """Trunca el apellido paterno para caber en una celda de grilla."""
+    if not apePaterno:
+        return "—"
+    ap = apePaterno.strip().upper()
+    if len(ap) <= max_chars:
+        return ap
+    return ap[: max_chars - 1] + "…"
+
+
 def _render_grilla_html(cromosoma) -> str:
-    """Renderiza la grilla del horario como tabla HTML coloreada."""
-    # Mapear celdas (hora, día) → (etiqueta, codAsignatura)
+    """
+    Renderiza la grilla del horario como tabla HTML coloreada.
+
+    Cada celda con clase muestra 3 líneas:
+      1. Código abreviado de la asignatura (ej. DSM).
+      2. Sección (ej. Sec 2).
+      3. Apellido paterno del docente (truncado).
+
+    Datos completos (nombre completo del docente, cupo, créditos) están en
+    la tabla-leyenda debajo de la grilla.
+    """
+    # Mapear celdas (hora, día) → info completa para el render
     celdas = {}
     asignaturas_orden = []
     for s in cromosoma.secciones:
         if s.codAsignatura not in asignaturas_orden:
             asignaturas_orden.append(s.codAsignatura)
         abrev = _abreviar_asignatura(s.desAsignatura)
-        etiqueta = f"{abrev}-S{s.codSeccion}"
+        info_celda = {
+            "abrev": abrev,
+            "seccion": s.codSeccion,
+            "docente": _apellido_corto(s.apePatDocente),
+            "cod_asig": s.codAsignatura,
+        }
         for b in s.bloques:
             if b.dia not in DIAS or b.horaInicio is None or b.horaFin is None:
                 continue
             h_ini = int(b.horaInicio.split(":")[0])
             h_fin = int(b.horaFin.split(":")[0])
             for h in range(max(h_ini, HORA_INICIO), min(h_fin, HORA_FIN)):
-                celdas[(h, b.dia)] = (etiqueta, s.codAsignatura)
+                celdas[(h, b.dia)] = info_celda
 
     color_de = {cod: PALETA[i % len(PALETA)] for i, cod in enumerate(asignaturas_orden)}
 
@@ -384,26 +409,41 @@ def _render_grilla_html(cromosoma) -> str:
         "}",
         ".horario {",
         "  border-collapse: collapse; width: 100%; font-size: 0.85em;",
-        "  background: #FFFFFF;",
+        "  background: #FFFFFF; table-layout: fixed;",
         "}",
         ".horario th, .horario td {",
-        "  border: 1px solid #E5E7EB; padding: 8px 6px; text-align: center;",
+        "  border: 1px solid #E5E7EB; padding: 6px 4px; text-align: center;",
+        "  vertical-align: middle; overflow: hidden; text-overflow: ellipsis;",
         "}",
         ".horario th {background: #F5F5F0; color: #1F2937; font-weight: 600;}",
         ".horario td.hora {background: #FAFAF7; color: #6B7280; font-weight: 600; width: 62px;}",
-        ".horario td.clase {color: #1F2937; font-weight: 500;}",
+        ".horario td.clase {color: #1F2937; padding: 6px 3px; line-height: 1.2;}",
+        ".horario td.clase .asig {font-weight: 700; font-size: 0.95em;}",
+        ".horario td.clase .sec {font-size: 0.75em; color: #4B5563; margin-top: 1px;}",
+        ".horario td.clase .prof {",
+        "  font-size: 0.72em; color: #374151; margin-top: 3px;",
+        "  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
+        "}",
         "</style>",
         "<div class='horario-wrap'>",
         "<table class='horario'>",
-        "<tr><th>HORA</th>" + "".join(f"<th>{d}</th>" for d in DIAS_ABREV) + "</tr>",
+        "<tr><th style='width:62px;'>HORA</th>" + "".join(f"<th>{d}</th>" for d in DIAS_ABREV) + "</tr>",
     ]
     for h in horas:
         fila = [f"<td class='hora'>{h:02d}:00</td>"]
         for d in DIAS:
             celda = celdas.get((h, d))
             if celda:
-                etiqueta, cod = celda
-                fila.append(f"<td class='clase' style='background:{color_de[cod]};'>{etiqueta}</td>")
+                bg = color_de[celda["cod_asig"]]
+                # Tooltip con datos completos al pasar el mouse
+                tooltip = f"{celda['abrev']} · Sección {celda['seccion']} · Prof. {celda['docente']}"
+                fila.append(
+                    f"<td class='clase' style='background:{bg};' title='{tooltip}'>"
+                    f"<div class='asig'>{celda['abrev']}</div>"
+                    f"<div class='sec'>Sec {celda['seccion']}</div>"
+                    f"<div class='prof'>{celda['docente']}</div>"
+                    f"</td>"
+                )
             else:
                 fila.append("<td></td>")
         html.append("<tr>" + "".join(fila) + "</tr>")
