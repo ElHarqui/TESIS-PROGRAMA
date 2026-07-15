@@ -251,6 +251,11 @@ def _init_state():
         "gen_validos_fin": 0,
         "credenciales_usuario": "",
         "credenciales_password": "",
+        # Fallback state cuando las HARD del alumno dejan sin horarios
+        "ga_ya_corrio": False,
+        "modo_fallback": False,
+        "hard_relajadas": [],
+        "contexto_original": None,   # se guarda para poder marcar violaciones en la grilla del fallback
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -313,8 +318,119 @@ def _construir_contexto(scores_docentes: dict, prefs_horario: PreferenciasHorari
     )
 
 
-def _correr_ga(contexto: ContextoAlumno):
-    """Ejecuta el GA completo. Devuelve (horarios_top_k, fitness_final)."""
+def _hard_configurables_activas(prefs: PreferenciasHorario) -> List[str]:
+    """
+    Devuelve los nombres de las HARD configurables por el alumno que están activas.
+    Vacío si el alumno no configuró ninguna (defaults: [], None, None).
+    Se usa para decidir si vale la pena disparar el fallback y para el banner.
+    """
+    activas = []
+    if prefs.dias_libres_obligatorios:
+        activas.append("dias_libres_obligatorios")
+    if prefs.hora_min:
+        activas.append("hora_min")
+    if prefs.hora_max:
+        activas.append("hora_max")
+    return activas
+
+
+def _relajar_prefs(prefs: PreferenciasHorario) -> PreferenciasHorario:
+    """
+    Devuelve una copia de `prefs` con las 3 HARD configurables desactivadas
+    (`[]`, `None`, `None`). Preserva las SOFT (turno, dias deseados, densidad).
+    """
+    import dataclasses
+    return dataclasses.replace(
+        prefs,
+        dias_libres_obligatorios=[],
+        hora_min=None,
+        hora_max=None,
+    )
+
+
+def _violaciones_bloque(bloque, prefs: PreferenciasHorario) -> List[str]:
+    """
+    Devuelve la lista de motivos por los que este bloque viola las HARD
+    configurables. Cada motivo es uno de: "dia_libre", "hora_min", "hora_max".
+    Vacía si el bloque no viola ninguna.
+
+    Reutiliza la lógica de verificar_dias_libres_obligatorios y verificar_rango_horario
+    (fitness/hard_constraints.py) pero a nivel de un solo bloque para poder
+    marcar celdas específicas en la grilla.
+    """
+    from fitness.hard_constraints import _hhmm_a_minutos
+
+    motivos = []
+    if bloque.dia and bloque.dia in prefs.dias_libres_obligatorios:
+        motivos.append("dia_libre")
+    if bloque.horaInicio is not None and bloque.horaFin is not None:
+        if prefs.hora_min:
+            min_int = _hhmm_a_minutos(prefs.hora_min)
+            if bloque.hora_inicio_int < min_int:
+                motivos.append("hora_min")
+        if prefs.hora_max:
+            max_int = _hhmm_a_minutos(prefs.hora_max)
+            if bloque.hora_fin_int > max_int:
+                motivos.append("hora_max")
+    return motivos
+
+
+# Texto amigable por motivo per-bloque (usado en tooltips y expanders)
+_MOTIVO_DESC = {
+    "dia_libre": "cae en un día que marcaste como obligatoriamente libre",
+    "hora_min":  "empieza antes de tu hora mínima obligatoria",
+    "hora_max":  "termina después de tu hora máxima obligatoria",
+}
+
+# Texto amigable por nombre de HARD (usado en el banner "se relajaron X e Y")
+_HARD_DESC = {
+    "dias_libres_obligatorios": "días obligatoriamente libres",
+    "hora_min": "hora mínima obligatoria",
+    "hora_max": "hora máxima obligatoria",
+}
+
+
+def _recomendaciones_por_horario(cromosoma, prefs: PreferenciasHorario) -> List[dict]:
+    """
+    Recorre las secciones del cromosoma y devuelve una lista con las secciones
+    que tienen al menos un bloque que viola alguna HARD configurable. Cada item:
+        {
+          "asignatura": "MINERIA DE DATOS",
+          "seccion": 2,
+          "docente": "COSME FELIX",
+          "bloques_violadores": [
+              {"dia": "SABADO", "hora": "08:00-10:00", "motivos": ["dia_libre"]},
+              ...
+          ]
+        }
+    Solo se usa cuando modo_fallback está activo.
+    """
+    items = []
+    for s in cromosoma.secciones:
+        bloques_violadores = []
+        for b in s.bloques:
+            motivos = _violaciones_bloque(b, prefs)
+            if motivos:
+                bloques_violadores.append({
+                    "dia": b.dia,
+                    "hora": f"{b.horaInicio}-{b.horaFin}",
+                    "motivos": motivos,
+                })
+        if bloques_violadores:
+            items.append({
+                "asignatura": s.desAsignatura.strip(),
+                "seccion": s.codSeccion,
+                "docente": s.docente_completo,
+                "bloques_violadores": bloques_violadores,
+            })
+    return items
+
+
+def _ejecutar_pase_ga(contexto: ContextoAlumno):
+    """
+    Un pase del GA con el contexto dado. Devuelve dict con top, fitness_fin,
+    omitidas, duracion, gen_validos_ini, gen_validos_fin.
+    """
     config = cargar_config().ga
 
     asignaturas = [p["codAsignatura"] for p in st.session_state.prematricula]
@@ -346,12 +462,65 @@ def _correr_ga(contexto: ContextoAlumno):
     fitness_fin = [evaluar_fitness(c, contexto) for c in poblacion_final]
     top = top_k_diversos(poblacion_final, fitness_fin, k=config.top_k, distancia_minima=config.distancia_minima)
 
-    st.session_state.horarios = top
-    st.session_state.fitness_fin = fitness_fin
-    st.session_state.omitidas = omitidas
-    st.session_state.duracion_ga = duracion
-    st.session_state.gen_validos_ini = sum(1 for f in fitness_ini if f > 0)
-    st.session_state.gen_validos_fin = sum(1 for f in fitness_fin if f > 0)
+    return {
+        "top": top,
+        "fitness_fin": fitness_fin,
+        "omitidas": omitidas,
+        "duracion": duracion,
+        "gen_validos_ini": sum(1 for f in fitness_ini if f > 0),
+        "gen_validos_fin": sum(1 for f in fitness_fin if f > 0),
+    }
+
+
+def _correr_ga(contexto: ContextoAlumno):
+    """
+    Ejecuta el GA con fallback:
+    1. Primer pase con el contexto original (respetando TODAS las HARD del alumno).
+    2. Si el top queda vacío Y el alumno tiene HARD configurables activas, corre
+       un segundo pase con esas HARD relajadas. Marca modo_fallback=True y guarda
+       los horarios relajados junto con la lista de HARD relajadas.
+    3. Si tampoco hay hard configurables o el segundo pase también queda vacío,
+       deja horarios=[] y modo_fallback=False. La UI mostrará mensaje de problema
+       estructural.
+
+    Guarda todo en session_state y marca ga_ya_corrio=True.
+    """
+    resultado = _ejecutar_pase_ga(contexto)
+    st.session_state.contexto_original = contexto
+
+    hard_activas = _hard_configurables_activas(contexto.prefs_horario)
+
+    if resultado["top"] or not hard_activas:
+        # Camino normal: hay horarios, o no hay hard configurables para relajar
+        st.session_state.horarios = resultado["top"]
+        st.session_state.fitness_fin = resultado["fitness_fin"]
+        st.session_state.omitidas = resultado["omitidas"]
+        st.session_state.duracion_ga = resultado["duracion"]
+        st.session_state.gen_validos_ini = resultado["gen_validos_ini"]
+        st.session_state.gen_validos_fin = resultado["gen_validos_fin"]
+        st.session_state.modo_fallback = False
+        st.session_state.hard_relajadas = []
+    else:
+        # Primer pase vacío + hay hard configurables → relajarlas y reintentar
+        contexto_relajado = ContextoAlumno(
+            prerequisitos=contexto.prerequisitos,
+            aprobados=contexto.aprobados,
+            max_creditos=contexto.max_creditos,
+            scores_docentes=contexto.scores_docentes,
+            prefs_horario=_relajar_prefs(contexto.prefs_horario),
+            pesos=contexto.pesos,
+        )
+        r2 = _ejecutar_pase_ga(contexto_relajado)
+        st.session_state.horarios = r2["top"]
+        st.session_state.fitness_fin = r2["fitness_fin"]
+        st.session_state.omitidas = r2["omitidas"]
+        st.session_state.duracion_ga = resultado["duracion"] + r2["duracion"]
+        st.session_state.gen_validos_ini = r2["gen_validos_ini"]
+        st.session_state.gen_validos_fin = r2["gen_validos_fin"]
+        st.session_state.modo_fallback = bool(r2["top"])
+        st.session_state.hard_relajadas = hard_activas if r2["top"] else []
+
+    st.session_state.ga_ya_corrio = True
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -379,7 +548,7 @@ def _apellido_corto(apePaterno: str, max_chars: int = 14) -> str:
     return ap[: max_chars - 1] + "…"
 
 
-def _render_grilla_html(cromosoma) -> str:
+def _render_grilla_html(cromosoma, contexto_original: ContextoAlumno = None) -> str:
     """
     Renderiza la grilla del horario como tabla HTML coloreada.
 
@@ -390,7 +559,16 @@ def _render_grilla_html(cromosoma) -> str:
 
     Datos completos (nombre completo del docente, cupo, créditos) están en
     la tabla-leyenda debajo de la grilla.
+
+    Si `contexto_original` se pasa (modo fallback), las celdas cuyos bloques
+    violan alguna HARD configurable del alumno se marcan con borde rojo y un
+    icono de advertencia. Se usa cuando el fallback está activo para señalar
+    exactamente qué bloques rompen las reglas estrictas.
     """
+    prefs_para_violar = None
+    if contexto_original is not None and _hard_configurables_activas(contexto_original.prefs_horario):
+        prefs_para_violar = contexto_original.prefs_horario
+
     # Mapear celdas (hora, día) → info completa para el render
     celdas = {}
     asignaturas_orden = []
@@ -398,15 +576,17 @@ def _render_grilla_html(cromosoma) -> str:
         if s.codAsignatura not in asignaturas_orden:
             asignaturas_orden.append(s.codAsignatura)
         abrev = _abreviar_asignatura(s.desAsignatura)
-        info_celda = {
-            "abrev": abrev,
-            "seccion": s.codSeccion,
-            "docente": _apellido_corto(s.apePatDocente),
-            "cod_asig": s.codAsignatura,
-        }
         for b in s.bloques:
             if b.dia not in DIAS or b.horaInicio is None or b.horaFin is None:
                 continue
+            violaciones = _violaciones_bloque(b, prefs_para_violar) if prefs_para_violar else []
+            info_celda = {
+                "abrev": abrev,
+                "seccion": s.codSeccion,
+                "docente": _apellido_corto(s.apePatDocente),
+                "cod_asig": s.codAsignatura,
+                "violaciones": violaciones,
+            }
             h_ini = int(b.horaInicio.split(":")[0])
             h_fin = int(b.horaFin.split(":")[0])
             for h in range(max(h_ini, HORA_INICIO), min(h_fin, HORA_FIN)):
@@ -449,6 +629,16 @@ def _render_grilla_html(cromosoma) -> str:
         "  font-size: 0.72em; color: #374151; margin-top: 3px;",
         "  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
         "}",
+        # Celda violada: mantiene el color pastel de la asignatura pero suma un
+        # borde rojo grueso via box-shadow inset (no altera el layout de la tabla)
+        # y un icono ⚠ en la esquina superior derecha.
+        ".horario td.clase.violada {",
+        "  box-shadow: inset 0 0 0 3px #DC2626; position: relative;",
+        "}",
+        ".horario td.clase.violada::after {",
+        "  content: '⚠'; position: absolute; top: 1px; right: 3px;",
+        "  color: #DC2626; font-size: 0.85em; font-weight: 700;",
+        "}",
         "</style>",
         "<div class='horario-wrap'>",
         "<table class='horario'>",
@@ -460,10 +650,15 @@ def _render_grilla_html(cromosoma) -> str:
             celda = celdas.get((h, d))
             if celda:
                 bg = color_de[celda["cod_asig"]]
+                clases = "clase"
                 # Tooltip con datos completos al pasar el mouse
                 tooltip = f"{celda['abrev']} · Sección {celda['seccion']} · Prof. {celda['docente']}"
+                if celda.get("violaciones"):
+                    clases += " violada"
+                    motivos_txt = ", ".join(_MOTIVO_DESC.get(m, m) for m in celda["violaciones"])
+                    tooltip += f" | ⚠ Viola: {motivos_txt}"
                 fila.append(
-                    f"<td class='clase' style='background:{bg};' title='{tooltip}'>"
+                    f"<td class='{clases}' style='background:{bg};' title='{tooltip}'>"
                     f"<div class='asig'>{celda['abrev']}</div>"
                     f"<div class='sec'>Sec {celda['seccion']}</div>"
                     f"<div class='prof'>{celda['docente']}</div>"
@@ -629,8 +824,28 @@ def _tab_horarios():
                 f"Cromosomas válidos: {st.session_state.gen_validos_ini} → {st.session_state.gen_validos_fin}"
             )
 
+    # ── Distinguir "aún no clickeó" vs "clickeó y no hay resultados" ──
     if not st.session_state.horarios:
-        st.info("Aún no se generaron horarios. Apretá el botón de arriba.")
+        if not st.session_state.ga_ya_corrio:
+            st.info("Aún no se generaron horarios. Apretá el botón de arriba.")
+        else:
+            # El GA corrió pero devolvió vacío incluso relajando las HARD configurables
+            # (o no había hard configurables para relajar). Es un problema estructural.
+            st.error(
+                "❌ **No se pudo generar ningún horario válido para tu prematrícula.** "
+                "El problema es estructural, no se resuelve relajando tus preferencias:"
+            )
+            st.markdown(
+                "- Puede haber **choques horarios inevitables** entre las secciones disponibles.\n"
+                "- Alguna asignatura puede tener **prerequisitos no aprobados** en tu historial.\n"
+                "- La suma de créditos de tu prematrícula puede **exceder el máximo** del plan.\n"
+                "- Puede haber **asignaturas sin secciones disponibles** este semestre."
+            )
+            if st.session_state.omitidas:
+                st.info(
+                    f"ℹ️ Detectamos {len(st.session_state.omitidas)} asignatura(s) sin sección "
+                    "disponible este semestre. Reducí tu prematrícula en el SUM para excluirlas."
+                )
         return
 
     if st.session_state.omitidas:
@@ -648,6 +863,18 @@ def _tab_horarios():
     scores = cargar_scores_docentes()
     prefs = cargar_preferencias_horarios()
     contexto = _construir_contexto(scores, prefs)
+    modo_fallback = st.session_state.modo_fallback
+
+    # ── Banner de fallback (arriba de todos los horarios) ──
+    if modo_fallback:
+        hard_txt = ", ".join(f"**{_HARD_DESC.get(h, h)}**" for h in st.session_state.hard_relajadas)
+        st.warning(
+            f"⚠️ **No se encontraron horarios cumpliendo TODAS tus restricciones estrictas.** "
+            f"Se muestran alternativas ignorando temporalmente: {hard_txt}. "
+            f"Los bloques con **borde rojo y ⚠** son los que violan esas restricciones. "
+            f"Considerá relajar alguna de esas reglas en la pestaña **Preferencias** para "
+            f"que el sistema pueda encontrar horarios válidos."
+        )
 
     def _render_uno(c):
         fit = evaluar_fitness(c, contexto)
@@ -674,20 +901,45 @@ def _tab_horarios():
             )
         st.write("")  # aire
 
-        st.markdown(_render_grilla_html(c), unsafe_allow_html=True)
+        # En modo fallback, pasamos el contexto original a la grilla para que
+        # marque las celdas violadoras con borde rojo.
+        ctx_para_grilla = contexto if modo_fallback else None
+        st.markdown(_render_grilla_html(c, ctx_para_grilla), unsafe_allow_html=True)
+
+        # Expander con recomendaciones (solo en modo fallback)
+        if modo_fallback:
+            recs = _recomendaciones_por_horario(c, contexto.prefs_horario)
+            if recs:
+                with st.expander(f"💡 Recomendaciones para este horario ({len(recs)} sección(es) en conflicto)"):
+                    for r in recs:
+                        motivos_lista = []
+                        for bv in r["bloques_violadores"]:
+                            motivo_txt = ", ".join(_MOTIVO_DESC.get(m, m) for m in bv["motivos"])
+                            motivos_lista.append(f"{bv['dia']} {bv['hora']} — {motivo_txt}")
+                        st.markdown(
+                            f"- **{r['asignatura']}** (Sección {r['seccion']}, docente {r['docente']}):"
+                        )
+                        for line in motivos_lista:
+                            st.markdown(f"    - {line}")
+                        st.caption(
+                            "Para tomar esta sección: quitá la restricción correspondiente en "
+                            "**Preferencias → Horarios**."
+                        )
+
         st.markdown("##### Detalle de secciones")
         _render_leyenda(c)
 
     if len(horarios) == 1:
-        st.warning(
-            f"ℹ️ **Solo hay UN horario posible** que cumple todas las restricciones de tu "
-            f"prematrícula. No existen más combinaciones distintas (se pidieron {k_pedido}, "
-            f"pero el espacio de búsqueda no permite más variantes)."
-        )
+        if not modo_fallback:
+            st.warning(
+                f"ℹ️ **Solo hay UN horario posible** que cumple todas las restricciones de tu "
+                f"prematrícula. No existen más combinaciones distintas (se pidieron {k_pedido}, "
+                f"pero el espacio de búsqueda no permite más variantes)."
+            )
         st.subheader("Horario óptimo único")
         _render_uno(horarios[0])
     else:
-        if len(horarios) < k_pedido:
+        if len(horarios) < k_pedido and not modo_fallback:
             st.info(
                 f"ℹ️ Solo se encontraron **{len(horarios)} horarios suficientemente distintos** "
                 f"(se pidieron {k_pedido}). El espacio de búsqueda de tu prematrícula no permite más variantes."

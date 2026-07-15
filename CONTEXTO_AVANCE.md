@@ -643,3 +643,50 @@ Abre el navegador en `http://localhost:8501`.
 - **Single-user**: la UI asume un solo alumno por instancia (mismo `data/cache.json`
   compartido). Multi-user requeriría un cache por sesión, fuera del scope V1.
 - **Cierre de sesión**: limpia `session_state` y vuelve a la pantalla de login.
+
+### Modo fallback: cuando las HARD del alumno dejan sin horarios
+
+Cuando el alumno configura HARD imposibles de cumplir (por ejemplo, marca
+todos los días como obligatoriamente libres, o pone `hora_max = "10:00"`
+sobre una prematrícula con clases nocturnas), un solo pase del GA devolvería
+lista vacía y el usuario vería una pantalla en blanco sin diagnóstico.
+
+Para evitar esto, `_correr_ga` (`app.py`) implementa un **fallback en dos
+pasos**:
+
+1. **Primer pase**: corre el GA con el `ContextoAlumno` original respetando
+   TODAS las HARD (las 4 intrínsecas + las 2 configurables por el alumno).
+2. **Si el top queda vacío Y el alumno tiene HARD configurables activas**
+   (`dias_libres_obligatorios != []`, `hora_min != None` o `hora_max !=
+   None`), se corre un segundo pase con esas HARD **relajadas** (helper
+   `_relajar_prefs` clona el `PreferenciasHorario` limpiando solo esos 3
+   campos, preservando las SOFT).
+3. Los cromosomas del segundo pase se marcan como **modo fallback** en
+   `session_state.modo_fallback = True` y la UI muestra:
+   - **Banner `st.warning`** arriba explicando qué HARD se relajaron.
+   - **Grilla con bloques violadores marcados**: cada `BloqueHorario` que
+     viola una HARD original se pinta con borde rojo grueso (3px) mediante
+     la clase CSS `.horario td.clase.violada` (`box-shadow inset`), sin
+     perder el color pastel de la asignatura. Ícono ⚠ en la esquina de la
+     celda. Tooltip enriquecido con el motivo.
+   - **Expander de recomendaciones** por horario: lista las secciones que
+     tienen bloques violadores, con el motivo por bloque, para que el
+     alumno sepa qué HARD quitar para poder tomarlas.
+4. **Si el segundo pase también queda vacío** (o no había HARD configurables
+   para relajar), se cae a la rama de **problema estructural**: `st.error`
+   explicando que probablemente hay choques inevitables, prerequisitos no
+   cumplidos, créditos excedidos o asignaturas sin sección disponible.
+5. Nuevo flag `session_state.ga_ya_corrio` distingue entre "el alumno no
+   apretó el botón todavía" (info azul "apretá el botón") y "el alumno
+   apretó y no hubo resultados" (error rojo estructural). Antes ambos casos
+   mostraban el mismo mensaje.
+
+**Detección per-bloque**: el helper `_violaciones_bloque(bloque, prefs)`
+replica la lógica de `verificar_dias_libres_obligatorios` y
+`verificar_rango_horario` (fitness/hard_constraints.py) pero granular a un
+único `BloqueHorario`, permitiendo marcar solo la celda que viola sin
+descalificar todo el horario.
+
+**Costo**: el segundo pase duplica el tiempo del GA (~0.5s total en el peor
+caso). Solo se dispara cuando el primer intento fracasa por HARD
+configurables, no en el flujo normal.
