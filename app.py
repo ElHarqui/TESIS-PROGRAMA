@@ -86,7 +86,148 @@ st.set_page_config(
     page_title="Optimizador de horarios UNMSM",
     page_icon="🎓",
     layout="wide",
+    initial_sidebar_state="expanded",
+    menu_items={
+        "About": (
+            "Sistema de optimización de horarios de matrícula UNMSM "
+            "mediante algoritmos genéticos. Tesis de Ingeniería de Sistemas."
+        ),
+    },
 )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# CSS PERSONALIZADO (estilo profesional)
+# ─────────────────────────────────────────────────────────────────────
+
+_CUSTOM_CSS = """
+<style>
+  /* Ocultar chrome innecesario de Streamlit para un aspecto pulido */
+  #MainMenu {visibility: hidden;}
+  footer {visibility: hidden;}
+  [data-testid="stStatusWidget"] {display: none;}
+
+  /* Contenedor principal con menos padding vertical y un ancho contenido */
+  .block-container {
+    padding-top: 1.5rem;
+    padding-bottom: 2rem;
+    max-width: 1400px;
+  }
+
+  /* Header institucional */
+  .app-header {
+    background: linear-gradient(135deg, #8B1A1A 0%, #6B1414 100%);
+    color: #FFFFFF;
+    padding: 1.25rem 1.75rem;
+    border-radius: 10px;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+  }
+  .app-header h1 {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .app-header .subtitulo {
+    opacity: 0.85;
+    font-size: 0.9rem;
+    margin-top: 0.2rem;
+  }
+  .app-header .alumno-info {
+    text-align: right;
+    font-size: 0.85rem;
+    line-height: 1.4;
+  }
+  .app-header .alumno-info strong {
+    font-size: 0.95rem;
+  }
+
+  /* Cards de métricas coloreadas por concepto */
+  .metrica-card {
+    background: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-left: 4px solid #8B1A1A;
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  }
+  .metrica-card .label {
+    font-size: 0.75rem;
+    color: #6B7280;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+    margin-bottom: 0.2rem;
+  }
+  .metrica-card .valor {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #111827;
+    line-height: 1.2;
+  }
+  .metrica-card.fitness   {border-left-color: #8B1A1A;}
+  .metrica-card.horarios  {border-left-color: #1D4ED8;}
+  .metrica-card.docentes  {border-left-color: #059669;}
+  .metrica-card.cupos     {border-left-color: #D97706;}
+  .metrica-card.creditos  {border-left-color: #7C3AED;}
+
+  /* Sidebar limpio */
+  section[data-testid="stSidebar"] {
+    background-color: #FAFAF7;
+    border-right: 1px solid #E5E7EB;
+  }
+  section[data-testid="stSidebar"] h1,
+  section[data-testid="stSidebar"] h2,
+  section[data-testid="stSidebar"] h3 {
+    color: #1F2937;
+  }
+  .sidebar-caja {
+    background: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 8px;
+    padding: 0.75rem;
+    margin-bottom: 0.75rem;
+  }
+  .sidebar-caja .nombre {
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: #111827;
+  }
+  .sidebar-caja .detalle {
+    font-size: 0.8rem;
+    color: #6B7280;
+    margin-top: 0.15rem;
+  }
+
+  /* Tablas de leyenda y datos */
+  .stDataFrame {border-radius: 8px; overflow: hidden;}
+
+  /* Botones */
+  .stButton > button {
+    border-radius: 6px;
+    font-weight: 500;
+  }
+  .stDownloadButton > button {
+    border-radius: 6px;
+    font-weight: 500;
+  }
+
+  /* Tabs con más aire y color activo institucional */
+  .stTabs [data-baseweb="tab-list"] {
+    gap: 0.25rem;
+  }
+  .stTabs [data-baseweb="tab"] {
+    padding: 0.6rem 1.1rem;
+    font-weight: 500;
+  }
+</style>
+"""
+st.markdown(_CUSTOM_CSS, unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -235,12 +376,24 @@ def _render_grilla_html(cromosoma) -> str:
     # Las celdas vacias heredan el color del tema (no se fija).
     html = [
         "<style>",
-        ".horario {border-collapse: collapse; width: 100%; font-size: 0.85em; margin: 0.5em 0;}",
-        ".horario th, .horario td {border: 1px solid #666; padding: 6px; text-align: center;}",
-        ".horario th {background: #DDDDDD; color: #222;}",
-        ".horario td.hora {background: #EEEEEE; color: #222; font-weight: bold; width: 60px;}",
-        ".horario td.clase {color: #222; font-weight: 500;}",
+        ".horario-wrap {",
+        "  border-radius: 10px; overflow: hidden;",
+        "  box-shadow: 0 1px 3px rgba(0,0,0,0.08);",
+        "  border: 1px solid #E5E7EB;",
+        "  margin: 0.5rem 0 1rem 0;",
+        "}",
+        ".horario {",
+        "  border-collapse: collapse; width: 100%; font-size: 0.85em;",
+        "  background: #FFFFFF;",
+        "}",
+        ".horario th, .horario td {",
+        "  border: 1px solid #E5E7EB; padding: 8px 6px; text-align: center;",
+        "}",
+        ".horario th {background: #F5F5F0; color: #1F2937; font-weight: 600;}",
+        ".horario td.hora {background: #FAFAF7; color: #6B7280; font-weight: 600; width: 62px;}",
+        ".horario td.clase {color: #1F2937; font-weight: 500;}",
         "</style>",
+        "<div class='horario-wrap'>",
         "<table class='horario'>",
         "<tr><th>HORA</th>" + "".join(f"<th>{d}</th>" for d in DIAS_ABREV) + "</tr>",
     ]
@@ -255,6 +408,7 @@ def _render_grilla_html(cromosoma) -> str:
                 fila.append("<td></td>")
         html.append("<tr>" + "".join(fila) + "</tr>")
     html.append("</table>")
+    html.append("</div>")
     return "\n".join(html)
 
 
@@ -284,13 +438,29 @@ def _render_leyenda(cromosoma):
 
 def _sidebar():
     with st.sidebar:
-        st.title("🎓 Horarios UNMSM")
+        # Título institucional
+        st.markdown(
+            "<h2 style='margin:0 0 0.25rem 0; color:#8B1A1A;'>🎓 Horarios UNMSM</h2>"
+            "<div style='color:#6B7280; font-size:0.85rem; margin-bottom:1rem;'>"
+            "Optimizador con algoritmos genéticos</div>",
+            unsafe_allow_html=True,
+        )
 
         if st.session_state.alumno is None:
-            st.subheader("Ingresar al SUM")
-            usuario = st.text_input("Usuario / código", value=os.getenv("LOGIN", ""))
-            password = st.text_input("Contraseña", type="password", value=os.getenv("PASSWORD", ""))
-            forzar = st.checkbox("Forzar re-scraping (ignorar caché)", value=False)
+            st.markdown("#### 🔐 Iniciar sesión")
+            st.caption("Ingresá tus credenciales del Sistema Único de Matrícula.")
+            usuario = st.text_input(
+                "Usuario / código", value=os.getenv("LOGIN", ""),
+                placeholder="Ej: 22200033",
+            )
+            password = st.text_input(
+                "Contraseña", type="password", value=os.getenv("PASSWORD", ""),
+                placeholder="••••••••",
+            )
+            forzar = st.checkbox(
+                "Forzar re-scraping (ignorar caché)", value=False,
+                help="Marcar solo si los datos del caché están desactualizados.",
+            )
 
             if st.button("Conectar al SUM", type="primary", use_container_width=True):
                 if not usuario or not password:
@@ -300,37 +470,62 @@ def _sidebar():
                     try:
                         datos, origen = _scrape_o_cargar_cache(usuario, password, forzar)
                         _parsear_y_guardar(datos)
-                        st.success(f"Datos cargados ({'caché' if origen == 'cache' else 'scrape'})")
+                        st.session_state.credenciales_usuario = usuario
+                        st.session_state.credenciales_password = password
+                        st.success(
+                            f"Datos cargados desde {'caché local' if origen == 'cache' else 'SUM'}"
+                        )
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Fallo: {e}")
+                        st.error(f"No se pudo conectar: {e}")
         else:
             alumno = st.session_state.alumno
-            st.markdown(f"**👤 {alumno.raw.get('nomAlumno', '')} {alumno.raw.get('apePaterno', '')}**")
-            st.caption(f"Código: {alumno.raw.get('codAlumno', '?')}")
-            st.caption(f"Ciclo {alumno.cicloActual} · Ponderado {alumno.promedioPonderado}")
-            st.divider()
+            raw = alumno.raw
+            nombre_completo = f"{raw.get('nomAlumno', '').strip()} {raw.get('apePaterno', '').strip()} {raw.get('apeMaterno', '').strip()}"
 
-            if st.button("🔄 Re-scrapear (forzar)", use_container_width=True):
+            # Card del alumno
+            st.markdown("#### 👤 Sesión activa")
+            st.markdown(
+                f"""
+                <div class="sidebar-caja">
+                    <div class="nombre">{nombre_completo}</div>
+                    <div class="detalle">Código {raw.get('codAlumno', '?')}</div>
+                    <div class="detalle">Ciclo {alumno.cicloActual} · Ponderado {alumno.promedioPonderado}</div>
+                    <div class="detalle">{raw.get('desEscuela', '').strip()}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            # Acciones
+            st.markdown("#### ⚙️ Acciones")
+            if st.button("🔄 Re-scrapear datos", use_container_width=True, help="Ignora el caché y consulta el SUM"):
                 with st.spinner("Re-scrapeando..."):
                     try:
-                        usuario = os.getenv("LOGIN", "") or st.session_state.credenciales_usuario
-                        password = os.getenv("PASSWORD", "") or st.session_state.credenciales_password
+                        usuario = st.session_state.credenciales_usuario or os.getenv("LOGIN", "")
+                        password = st.session_state.credenciales_password or os.getenv("PASSWORD", "")
                         if not usuario or not password:
                             st.error("Cerrá sesión y volvé a loguearte para forzar scrape.")
                         else:
                             datos, _ = _scrape_o_cargar_cache(usuario, password, forzar_scrape=True)
                             _parsear_y_guardar(datos)
-                            st.success("Re-scrape OK")
+                            st.success("Re-scrape completo")
                             st.rerun()
                     except Exception as e:
                         st.error(f"Fallo: {e}")
 
-            if st.button("Cerrar sesión", use_container_width=True):
+            if st.button("🚪 Cerrar sesión", use_container_width=True):
                 for k in list(st.session_state.keys()):
                     del st.session_state[k]
                 _init_state()
                 st.rerun()
+
+            # Footer informativo
+            st.markdown("---")
+            st.caption(
+                "Sistema desarrollado como tesis de la Escuela Profesional de "
+                "Ingeniería de Sistemas · UNMSM"
+            )
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -338,10 +533,13 @@ def _sidebar():
 # ─────────────────────────────────────────────────────────────────────
 
 def _tab_horarios():
-    st.header("Mis horarios")
-    st.caption(
-        "Genera 5 horarios diferentes optimizados con algoritmo genético, "
-        "ajustados a tus preferencias y la realidad de cupos del semestre."
+    st.markdown("### 📅 Mis horarios")
+    st.markdown(
+        "<div style='color:#6B7280; margin-bottom:1rem;'>"
+        "Optimización con algoritmo genético · Genera 5 horarios diversos ajustados a "
+        "tus preferencias y la realidad del semestre."
+        "</div>",
+        unsafe_allow_html=True,
     )
 
     if not st.session_state.prematricula:
@@ -350,7 +548,8 @@ def _tab_horarios():
 
     col1, col2 = st.columns([1, 3])
     with col1:
-        if st.button("🧬 Generar 5 horarios", type="primary", use_container_width=True):
+        k = cargar_config().ga.top_k
+        if st.button(f"🧬 Generar {k} horarios", type="primary", use_container_width=True):
             with st.spinner("Ejecutando algoritmo genético..."):
                 scores = cargar_scores_docentes()
                 prefs = cargar_preferencias_horarios()
@@ -360,8 +559,9 @@ def _tab_horarios():
     with col2:
         if st.session_state.horarios:
             st.success(
-                f"Top-{len(st.session_state.horarios)} generados en {st.session_state.duracion_ga:.2f}s · "
-                f"Válidos: {st.session_state.gen_validos_ini} → {st.session_state.gen_validos_fin}"
+                f"✅ **{len(st.session_state.horarios)} horarios** generados en "
+                f"**{st.session_state.duracion_ga:.2f}s** · "
+                f"Cromosomas válidos: {st.session_state.gen_validos_ini} → {st.session_state.gen_validos_fin}"
             )
 
     if not st.session_state.horarios:
@@ -391,15 +591,26 @@ def _tab_horarios():
         p_cup = preferencia_cupos(c, contexto)
         creditos = sum(s.creditos for s in c.secciones)
 
+        # Métricas como cards coloreadas por concepto
         m1, m2, m3, m4, m5 = st.columns(5)
-        m1.metric("Fitness", f"{fit:.4f}")
-        m2.metric("Horarios", f"{p_hor:.2f}")
-        m3.metric("Docentes", f"{p_doc:.2f}")
-        m4.metric("Cupos", f"{p_cup:.2f}")
-        m5.metric("Créditos", f"{creditos:.0f}")
+        for col, cls, label, valor in [
+            (m1, "fitness",  "Fitness",  f"{fit:.4f}"),
+            (m2, "horarios", "Horarios", f"{p_hor:.2f}"),
+            (m3, "docentes", "Docentes", f"{p_doc:.2f}"),
+            (m4, "cupos",    "Cupos",    f"{p_cup:.2f}"),
+            (m5, "creditos", "Créditos", f"{creditos:.0f}"),
+        ]:
+            col.markdown(
+                f"<div class='metrica-card {cls}'>"
+                f"<div class='label'>{label}</div>"
+                f"<div class='valor'>{valor}</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        st.write("")  # aire
 
         st.markdown(_render_grilla_html(c), unsafe_allow_html=True)
-        st.subheader("Leyenda")
+        st.markdown("##### Detalle de secciones")
         _render_leyenda(c)
 
     if len(horarios) == 1:
@@ -423,7 +634,8 @@ def _tab_horarios():
 
     # Descargas
     st.divider()
-    st.subheader("Descargas")
+    st.markdown("#### 📥 Exportar horarios")
+    st.caption("Descargá los 5 horarios en formato Excel (una hoja por horario) o PDF (una página por horario).")
     col_x, col_p = st.columns(2)
     try:
         path_x = exportar_excel(horarios, contexto, "output/horarios.xlsx", asignaturas_omitidas=st.session_state.omitidas)
@@ -613,20 +825,78 @@ def _tab_datos():
 # MAIN
 # ─────────────────────────────────────────────────────────────────────
 
+def _render_header():
+    """Header institucional visible cuando hay una sesión activa."""
+    alumno = st.session_state.alumno
+    raw = alumno.raw
+    nombre = f"{raw.get('nomAlumno', '').strip()} {raw.get('apePaterno', '').strip()}"
+    escuela = raw.get("desEscuela", "").strip()
+    codigo = raw.get("codAlumno", "?")
+    st.markdown(
+        f"""
+        <div class="app-header">
+            <div>
+                <h1>🎓 Optimizador de horarios UNMSM</h1>
+                <div class="subtitulo">
+                    Generación de horarios óptimos mediante algoritmos genéticos
+                </div>
+            </div>
+            <div class="alumno-info">
+                <strong>{nombre}</strong><br/>
+                {escuela}<br/>
+                Código {codigo} · Ciclo {alumno.cicloActual} · Ponderado {alumno.promedioPonderado}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_bienvenida():
+    """Pantalla de bienvenida cuando no hay sesión."""
+    st.markdown(
+        """
+        <div class="app-header">
+            <div>
+                <h1>🎓 Optimizador de horarios UNMSM</h1>
+                <div class="subtitulo">
+                    Generación de horarios óptimos mediante algoritmos genéticos
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    col_left, col_right = st.columns([2, 1])
+    with col_left:
+        st.markdown(
+            """
+            ### Cómo funciona
+
+            1. **Iniciá sesión** con tus credenciales del SUM desde la barra lateral.
+            2. **Ajustá tus preferencias** de docentes y horarios.
+            3. **Generá 5 horarios óptimos** diferentes entre sí, listos para revisar y descargar.
+
+            El sistema evalúa cada horario contra restricciones duras (choques, prerequisitos,
+            créditos) y suaves (turno preferido, docentes, disponibilidad de cupos) para
+            entregarte alternativas realistas que respetan tu situación académica.
+            """
+        )
+    with col_right:
+        st.info(
+            "💡 Si tenés configurado `LOGIN` y `PASSWORD` en un archivo `.env`, "
+            "las credenciales se cargan como valores por defecto."
+        )
+
+
 def main():
     _sidebar()
 
     if st.session_state.alumno is None:
-        st.title("Optimizador de horarios UNMSM")
-        st.write(
-            "Iniciá sesión desde la barra lateral con tus credenciales del SUM "
-            "para que el sistema arme tus 5 mejores horarios."
-        )
-        st.info(
-            "💡 Tip: si configurás `LOGIN` y `PASSWORD` en un archivo `.env`, "
-            "se cargan como valores por defecto en el formulario de login."
-        )
+        _render_bienvenida()
         return
+
+    _render_header()
 
     tab_h, tab_p, tab_d = st.tabs(["📅 Mis horarios", "⚙️ Preferencias", "🎓 Datos académicos"])
     with tab_h:

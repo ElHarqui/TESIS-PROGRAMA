@@ -1,0 +1,29 @@
+# Configuración del tema de la aplicación.
+# Referencia: https://docs.streamlit.io/library/advanced-features/theming
+
+[theme]
+# Base clara por defecto. El usuario puede alternar a modo oscuro desde Settings.
+base = "light"
+
+# Colores institucionales sobrios (paleta granate/dorado, coherente con UNMSM).
+primaryColor = "#8B1A1A"           # Granate — usado para botones primary, links, sliders activos
+backgroundColor = "#FFFFFF"        # Fondo principal
+secondaryBackgroundColor = "#F5F5F0"  # Fondo del sidebar y cards (crema suave)
+textColor = "#1F2937"              # Texto principal (gris muy oscuro, mejor que negro puro)
+
+# Tipografía sans-serif estándar de Streamlit.
+font = "sans serif"
+
+[server]
+# Puerto por defecto.
+port = 8501
+# No abrir el browser automáticamente cuando se corre en headless.
+headless = false
+
+[browser]
+# No enviar telemetría de uso.
+gatherUsageStats = false
+
+[client]
+# No mostrar el toolbar dev al usuario final.
+toolbarMode = "minimal"
