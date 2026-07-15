@@ -286,6 +286,19 @@ def _parsear_y_guardar(datos_raw: dict):
     st.session_state.prematricula = parsear_prematricula(datos_raw["prematricula"])
     st.session_state.historial = parsear_historial(datos_raw["historial"])
 
+    # El codAlumno y otros datos de identificacion NO estan en el endpoint
+    # /informacion/perfil (que solo trae DNI, correos, ciclo, ponderado).
+    # Viven en programacion.data.alumno junto con nomAlumno, apePaterno,
+    # desEscuela y desFacultad. Los cross-referenciamos al raw del alumno
+    # para que la UI (header y sidebar) los pueda mostrar.
+    prog_data = datos_raw.get("programacion", {}).get("data", {})
+    prog_alumno = prog_data.get("alumno", {}) if isinstance(prog_data, dict) else {}
+    if isinstance(prog_alumno, dict) and st.session_state.alumno is not None:
+        for k in ("codAlumno", "nomAlumno", "apePaterno", "apeMaterno",
+                  "desEscuela", "desFacultad"):
+            if prog_alumno.get(k):
+                st.session_state.alumno.raw[k] = prog_alumno[k]
+
 
 def _construir_contexto(scores_docentes: dict, prefs_horario: PreferenciasHorario) -> ContextoAlumno:
     config = cargar_config()
