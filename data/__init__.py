@@ -12,7 +12,14 @@ from .parser import (
     AsignaturaPlan,
     RegistroHistorial,       # ← nuevo
 )
-from .cache import Cache
+from .cache import Cache, sanitizar_usuario
+from .exceptions import (
+    SumError,
+    SumCredencialesInvalidasError,
+    SumMantenimientoError,
+    SumTimeoutError,
+    SumDatosIncompletosError,
+)
 
 __all__ = [
     "obtener_datos_sum",
@@ -28,4 +35,10 @@ __all__ = [
     "AsignaturaPlan",
     "RegistroHistorial",
     "Cache",
+    "sanitizar_usuario",
+    "SumError",
+    "SumCredencialesInvalidasError",
+    "SumMantenimientoError",
+    "SumTimeoutError",
+    "SumDatosIncompletosError",
 ]

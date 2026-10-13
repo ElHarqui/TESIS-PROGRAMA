@@ -1,43 +1,26 @@
 from models import Cromosoma
 from .contexto import ContextoAlumno
-from .hard_constraints import (
-    verificar_choques,
-    verificar_prerequisitos,
-    verificar_asignaturas_unicas,
-    verificar_limite_creditos,
-    verificar_dias_libres_obligatorios,
-    verificar_rango_horario,
-)
+from .hard_constraints import calcular_penalizacion_hard
 from .soft_constraints import preferencia_horarios, preferencia_docentes, preferencia_cupos
 
 
 def evaluar_fitness(cromosoma: Cromosoma, contexto: ContextoAlumno) -> float:
     """
-    Fitness 0-1 de un cromosoma. 0.0 si viola algún hard constraint.
+    Calcula el fitness de un cromosoma mediante penalización progresiva:
 
-    Orden de checks (cortocircuito al primer fallo):
-    1. Choques horarios (barato, filtra la mayoría).
-    2. Asignaturas únicas.
-    3. Límite de créditos.
-    4. Prerequisitos aprobados.
-    5. Días obligatoriamente libres (preferencia HARD del alumno).
-    6. Rango horario obligatorio (preferencia HARD del alumno).
+    1. Si tiene violaciones de restricciones duras (penalización > 0):
+       Retorna un valor negativo: -penalización (< 0.0).
+       Esto preserva el gradiente de optimización para que la selección natural
+       pueda guiar la población hacia la región factible, premiando soluciones con
+       menos violaciones sobre aquellas con muchas.
 
-    Los pesos de los 3 soft constraints viven en contexto.pesos
-    (externalizables vía config_ga.json).
+    2. Si es 100% factible (penalización == 0):
+       Retorna un score positivo en [0.0, 1.0], combinando linealmente las
+       preferencias de horario, docentes y cupos según contexto.pesos.
     """
-    if not verificar_choques(cromosoma):
-        return 0.0
-    if not verificar_asignaturas_unicas(cromosoma):
-        return 0.0
-    if not verificar_limite_creditos(cromosoma, contexto):
-        return 0.0
-    if not verificar_prerequisitos(cromosoma, contexto):
-        return 0.0
-    if not verificar_dias_libres_obligatorios(cromosoma, contexto):
-        return 0.0
-    if not verificar_rango_horario(cromosoma, contexto):
-        return 0.0
+    penalizacion = calcular_penalizacion_hard(cromosoma, contexto)
+    if penalizacion > 0:
+        return -penalizacion
 
     pesos = contexto.pesos
     score_horarios = preferencia_horarios(cromosoma, contexto)

@@ -187,6 +187,8 @@ cython_debug/
 # Cache del scraping SUM: contiene DNI, correos, direccion, celular, ponderado y
 # todo el historial academico del alumno. NUNCA debe estar en git.
 data/cache.json
+data/cache_*.json
+data/users/
 
 # Preferencias manuales del alumno (docentes, horarios, etc). Personal por alumno.
 data/preferencias_*.json

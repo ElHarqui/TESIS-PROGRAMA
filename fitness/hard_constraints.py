@@ -91,3 +91,72 @@ def verificar_rango_horario(cromosoma: Cromosoma, contexto: ContextoAlumno) -> b
             if max_int is not None and b.hora_fin_int > max_int:
                 return False
     return True
+
+
+def calcular_penalizacion_hard(cromosoma: Cromosoma, contexto: ContextoAlumno) -> float:
+    """
+    Calcula una penalización continua/progresiva según las violaciones de restricciones duras.
+    Devuelve 0.0 si el cromosoma es 100% factible.
+
+    Cada tipo de violación aporta un peso para permitir que la selección natural
+    distinga entre soluciones casi factibles y soluciones totalmente inviables:
+    - Choques horarios: 2.0 por cada par de bloques solapados.
+    - Asignaturas duplicadas: 5.0 por cada duplicado.
+    - Exceso de créditos: 0.5 por cada crédito por encima del límite.
+    - Prerequisitos no cumplidos: 3.0 por cada curso sin prerequisito aprobado.
+    - Días obligatoriamente libres violados: 1.5 por cada bloque en día prohibido.
+    - Rango horario obligatorio violado: 1.0 por cada bloque fuera de franja.
+    """
+    penalizacion = 0.0
+
+    # 1. Choques horarios
+    bloques = [b for s in cromosoma.secciones for b in s.bloques]
+    n_bloques = len(bloques)
+    for i in range(n_bloques):
+        for j in range(i + 1, n_bloques):
+            if bloques[i].choca_con(bloques[j]):
+                penalizacion += 2.0
+
+    # 2. Asignaturas únicas
+    codigos = [s.codAsignatura for s in cromosoma.secciones]
+    duplicados = len(codigos) - len(set(codigos))
+    if duplicados > 0:
+        penalizacion += duplicados * 5.0
+
+    # 3. Límite de créditos
+    total_creditos = sum(s.creditos for s in cromosoma.secciones)
+    if total_creditos > contexto.max_creditos:
+        penalizacion += (total_creditos - contexto.max_creditos) * 0.5
+
+    # 4. Prerequisitos
+    for s in cromosoma.secciones:
+        pre = contexto.prerequisitos.get(s.codAsignatura)
+        if pre is not None and pre not in contexto.aprobados:
+            penalizacion += 3.0
+
+    # 5. Días libres obligatorios
+    obligatorios = set(contexto.prefs_horario.dias_libres_obligatorios)
+    if obligatorios:
+        for b in bloques:
+            if b.dia in obligatorios:
+                penalizacion += 1.5
+
+    # 6. Rango horario obligatorio
+    prefs = contexto.prefs_horario
+    if prefs.hora_min or prefs.hora_max:
+        min_int = _hhmm_a_minutos(prefs.hora_min) if prefs.hora_min else None
+        max_int = _hhmm_a_minutos(prefs.hora_max) if prefs.hora_max else None
+        for b in bloques:
+            if b.horaInicio is None or b.horaFin is None:
+                continue
+            if min_int is not None and b.hora_inicio_int < min_int:
+                penalizacion += 1.0
+            if max_int is not None and b.hora_fin_int > max_int:
+                penalizacion += 1.0
+
+    return penalizacion
+
+
+def es_factible(cromosoma: Cromosoma, contexto: ContextoAlumno) -> bool:
+    """True si el cromosoma no tiene ninguna violación de restricciones duras."""
+    return calcular_penalizacion_hard(cromosoma, contexto) == 0.0

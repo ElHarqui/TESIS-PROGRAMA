@@ -28,8 +28,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from models import Cromosoma
-from fitness import ContextoAlumno, evaluar_fitness, preferencia_horarios, preferencia_docentes, preferencia_cupos
+from models import Cromosoma, HorarioResultado
 from .visualizer import (
     DIAS,
     DIAS_ABREV,
@@ -88,39 +87,33 @@ def _horas_relevantes(celdas) -> List[int]:
 # EXCEL
 # ─────────────────────────────────────────────────────────────────────
 
-def _escribir_hoja_excel(ws, rank: int, cromosoma: Cromosoma, ctx: ContextoAlumno):
-    """Llena una hoja con un horario."""
-    fit = evaluar_fitness(cromosoma, ctx)
-    p_hor = preferencia_horarios(cromosoma, ctx)
-    p_doc = preferencia_docentes(cromosoma, ctx)
-    p_cup = preferencia_cupos(cromosoma, ctx)
-    creditos = sum(s.creditos for s in cromosoma.secciones)
-
-    ws.title = f"Horario {rank}"
+def _escribir_hoja_excel(ws, horario_res: HorarioResultado):
+    """Llena una hoja con un horario a partir del DTO HorarioResultado."""
+    ws.title = f"Horario {horario_res.rank}"
 
     # ── Header con metadata ──
     bold = Font(bold=True, size=12)
     titulo = Font(bold=True, size=14)
-    ws["A1"] = f"HORARIO #{rank}"
+    ws["A1"] = f"HORARIO #{horario_res.rank}"
     ws["A1"].font = titulo
     ws.merge_cells("A1:G1")
     ws["A1"].alignment = Alignment(horizontal="center")
 
     ws["A3"] = "Fitness"
-    ws["B3"] = round(fit, 4)
+    ws["B3"] = round(horario_res.fitness, 4)
     ws["C3"] = "Horarios"
-    ws["D3"] = round(p_hor, 2)
+    ws["D3"] = round(horario_res.score_horarios, 2)
     ws["E3"] = "Docentes"
-    ws["F3"] = round(p_doc, 2)
+    ws["F3"] = round(horario_res.score_docentes, 2)
     ws["A4"] = "Cupos"
-    ws["B4"] = round(p_cup, 2)
+    ws["B4"] = round(horario_res.score_cupos, 2)
     ws["C4"] = "Créditos"
-    ws["D4"] = creditos
+    ws["D4"] = horario_res.creditos
     for cell in ["A3", "C3", "E3", "A4", "C4"]:
         ws[cell].font = bold
 
     # ── Grilla ──
-    celdas, color_de = _construir_celdas_grilla(cromosoma)
+    celdas, color_de = _construir_celdas_grilla(horario_res.cromosoma)
     horas = _horas_relevantes(celdas)
     fila_inicial = 6
 
@@ -172,7 +165,7 @@ def _escribir_hoja_excel(ws, rank: int, cromosoma: Cromosoma, ctx: ContextoAlumn
 
     visto = set()
     fila_actual = fila_leyenda + 2
-    for s in cromosoma.secciones:
+    for s in horario_res.cromosoma.secciones:
         key = (s.codAsignatura, s.codSeccion)
         if key in visto:
             continue
@@ -192,23 +185,28 @@ def _escribir_hoja_excel(ws, rank: int, cromosoma: Cromosoma, ctx: ContextoAlumn
 
 
 def exportar_excel(
-    cromosomas: List[Cromosoma],
-    contexto: ContextoAlumno,
+    cromosomas: List[Cromosoma] | List[HorarioResultado],
+    contexto: Optional[object] = None,
     filename: str = "output/horarios.xlsx",
     asignaturas_omitidas: Optional[List[str]] = None,
 ) -> Path:
     """
     Exporta los K horarios a un archivo Excel con una hoja por horario.
 
+    Acepta tanto una lista de Cromosoma como una lista de HorarioResultado (desacoplado).
     Devuelve el Path del archivo creado.
     """
     wb = Workbook()
     # Quitar la hoja por defecto
     wb.remove(wb.active)
 
-    for rank, c in enumerate(cromosomas, start=1):
-        ws = wb.create_sheet(title=f"Horario {rank}")
-        _escribir_hoja_excel(ws, rank, c, contexto)
+    for rank, item in enumerate(cromosomas, start=1):
+        if isinstance(item, HorarioResultado):
+            h_res = item
+        else:
+            h_res = HorarioResultado.construir(rank, item, contexto)
+        ws = wb.create_sheet(title=f"Horario {h_res.rank}")
+        _escribir_hoja_excel(ws, h_res)
 
     if asignaturas_omitidas:
         ws = wb.create_sheet(title="Omitidas", index=0)
@@ -274,34 +272,28 @@ def _construir_tabla_grilla_pdf(cromosoma: Cromosoma) -> Table:
     return tabla
 
 
-def _construir_pagina_pdf(rank: int, cromosoma: Cromosoma, ctx: ContextoAlumno, styles):
-    """Devuelve la lista de elementos (flowables) de la página de UN horario."""
-    fit = evaluar_fitness(cromosoma, ctx)
-    p_hor = preferencia_horarios(cromosoma, ctx)
-    p_doc = preferencia_docentes(cromosoma, ctx)
-    p_cup = preferencia_cupos(cromosoma, ctx)
-    creditos = sum(s.creditos for s in cromosoma.secciones)
-
+def _construir_pagina_pdf(horario_res: HorarioResultado, styles):
+    """Devuelve la lista de elementos (flowables) de la página de UN horario a partir del DTO."""
     elementos = []
-    elementos.append(Paragraph(f"<b>HORARIO #{rank}</b>", styles["Heading1"]))
+    elementos.append(Paragraph(f"<b>HORARIO #{horario_res.rank}</b>", styles["Heading1"]))
     meta = (
-        f"<b>Fitness:</b> {fit:.4f} &nbsp;&nbsp; "
-        f"<b>Horarios:</b> {p_hor:.2f} &nbsp;&nbsp; "
-        f"<b>Docentes:</b> {p_doc:.2f} &nbsp;&nbsp; "
-        f"<b>Cupos:</b> {p_cup:.2f} &nbsp;&nbsp; "
-        f"<b>Créditos:</b> {creditos:.0f}"
+        f"<b>Fitness:</b> {horario_res.fitness:.4f} &nbsp;&nbsp; "
+        f"<b>Horarios:</b> {horario_res.score_horarios:.2f} &nbsp;&nbsp; "
+        f"<b>Docentes:</b> {horario_res.score_docentes:.2f} &nbsp;&nbsp; "
+        f"<b>Cupos:</b> {horario_res.score_cupos:.2f} &nbsp;&nbsp; "
+        f"<b>Créditos:</b> {horario_res.creditos:.0f}"
     )
     elementos.append(Paragraph(meta, styles["Normal"]))
     elementos.append(Spacer(1, 0.2 * cm))
 
-    elementos.append(_construir_tabla_grilla_pdf(cromosoma))
+    elementos.append(_construir_tabla_grilla_pdf(horario_res.cromosoma))
     elementos.append(Spacer(1, 0.25 * cm))
 
     # Leyenda
     elementos.append(Paragraph("<b>Leyenda</b>", styles["Heading4"]))
     visto = set()
     leyenda_data = [["Código", "Asignatura", "Docente", "Cupo", "Cr"]]
-    for s in cromosoma.secciones:
+    for s in horario_res.cromosoma.secciones:
         key = (s.codAsignatura, s.codSeccion)
         if key in visto:
             continue
@@ -330,14 +322,15 @@ def _construir_pagina_pdf(rank: int, cromosoma: Cromosoma, ctx: ContextoAlumno, 
 
 
 def exportar_pdf(
-    cromosomas: List[Cromosoma],
-    contexto: ContextoAlumno,
+    cromosomas: List[Cromosoma] | List[HorarioResultado],
+    contexto: Optional[object] = None,
     filename: str = "output/horarios.pdf",
     asignaturas_omitidas: Optional[List[str]] = None,
 ) -> Path:
     """
     Exporta los K horarios a un PDF con una página por horario.
 
+    Acepta tanto una lista de Cromosoma como una lista de HorarioResultado (desacoplado).
     Devuelve el Path del archivo creado.
     """
     out = Path(filename)
@@ -355,9 +348,14 @@ def exportar_pdf(
 
     styles = getSampleStyleSheet()
     elementos = []
-    for rank, c in enumerate(cromosomas, start=1):
-        elementos.extend(_construir_pagina_pdf(rank, c, contexto, styles))
-        if rank < len(cromosomas):
+    total = len(cromosomas)
+    for rank, item in enumerate(cromosomas, start=1):
+        if isinstance(item, HorarioResultado):
+            h_res = item
+        else:
+            h_res = HorarioResultado.construir(rank, item, contexto)
+        elementos.extend(_construir_pagina_pdf(h_res, styles))
+        if rank < total:
             elementos.append(PageBreak())
 
     if asignaturas_omitidas:

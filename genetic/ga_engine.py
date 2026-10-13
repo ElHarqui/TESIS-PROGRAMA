@@ -1,4 +1,4 @@
-from typing import Callable, Dict, List, Sequence
+from typing import Callable, Dict, List, Sequence, Tuple, Union
 
 from models import Cromosoma, Seccion
 from .operators import cruce, mutacion
@@ -13,24 +13,58 @@ def ejecutar_ga(
     tasa_mutacion: float = 0.1,
     tamano_torneo: int = 3,
     elitismo: int = 2,
-) -> List[Cromosoma]:
+    retornar_historial: bool = False,
+) -> Union[List[Cromosoma], Tuple[List[Cromosoma], List[dict]]]:
     """
-    Loop generacional estándar con elitismo.
+    Loop generacional estándar con elitismo diverso.
 
     1. Evaluar fitness de cada cromosoma de la generación.
-    2. Preservar los `elitismo` mejores cromosomas (van directo a la siguiente generación).
-    3. Llenar el resto con cruce(p1, p2) + mutación, donde p1, p2 vienen de selección por torneo.
-    4. Repetir `max_generaciones` veces.
+    2. Si `retornar_historial` está activo, registrar métricas de convergencia
+       (mejor, promedio, peor, válidos) de la generación.
+    3. Preservar los `elitismo` mejores cromosomas sin duplicados.
+    4. Llenar el resto con cruce + mutación vía selección por torneo.
+    5. Repetir `max_generaciones` veces.
 
-    Devuelve la población FINAL (no la mejor — para extraer top-K diverso usar top_k_diversos).
+    Devuelve la población final o (poblacion_final, historial) si retornar_historial=True.
     """
     poblacion = list(poblacion_inicial)
     pob_size = len(poblacion)
+    historial: List[dict] = []
 
-    for _ in range(max_generaciones):
+    for gen in range(max_generaciones):
         fitness = [evaluador(c) for c in poblacion]
+
+        if retornar_historial:
+            validos = sum(1 for f in fitness if f >= 0.0)
+            fitness_validos = [f for f in fitness if f >= 0.0]
+            prom_validos = (sum(fitness_validos) / len(fitness_validos)) if fitness_validos else 0.0
+            historial.append({
+                "generacion": gen + 1,
+                "mejor": max(fitness) if fitness else 0.0,
+                "promedio": (sum(fitness) / pob_size) if pob_size > 0 else 0.0,
+                "promedio_validos": prom_validos,
+                "peor": min(fitness) if fitness else 0.0,
+                "validos": validos,
+                "porcentaje_validos": (validos / pob_size * 100.0) if pob_size > 0 else 0.0,
+            })
+
         idx_ord = sorted(range(pob_size), key=lambda i: fitness[i], reverse=True)
-        nueva = [poblacion[i] for i in idx_ord[:elitismo]]
+
+        # Elitismo diverso: preservar los mejores individuos evitando duplicados idénticos
+        nueva = []
+        for i in idx_ord:
+            c = poblacion[i]
+            if not any(distancia_cromosomas(c, elite) == 0 for elite in nueva):
+                nueva.append(c)
+                if len(nueva) >= elitismo:
+                    break
+        # Si no hay suficientes cromosomas únicos, completar con los mejores disponibles
+        if len(nueva) < elitismo:
+            for i in idx_ord:
+                if len(nueva) >= elitismo:
+                    break
+                nueva.append(poblacion[i])
+
         while len(nueva) < pob_size:
             p1 = seleccion_torneo(poblacion, fitness, tamano_torneo)
             p2 = seleccion_torneo(poblacion, fitness, tamano_torneo)
@@ -38,14 +72,21 @@ def ejecutar_ga(
             hijo = mutacion(hijo, secciones_por_asig, tasa_mutacion)
             nueva.append(hijo)
         poblacion = nueva
+
+    if retornar_historial:
+        return poblacion, historial
     return poblacion
 
 
 def distancia_cromosomas(c1: Cromosoma, c2: Cromosoma) -> int:
     """
-    Distancia = número de secciones DISTINTAS entre los cromosomas.
-    Asume mismo orden de asignaturas (invariante de generar_poblacion_inicial).
-    Rango: 0 (idénticos) a len(c1.secciones).
+    Calcula la Distancia de Hamming (Hamming, 1950) entre dos cromosomas.
+
+    Representa el número de posiciones (secciones de asignaturas) en las que
+    ambos cromosomas difieren entre sí sobre el espacio vectorial discreto:
+        d_H(C_1, C_2) = sum(I(s_1_i != s_2_i))
+    Asume el mismo orden de asignaturas (invariante de población).
+    Rango: 0 (cromosomas genéticamente idénticos) a len(c1.secciones).
     """
     return sum(
         1 for s1, s2 in zip(c1.secciones, c2.secciones)
@@ -85,27 +126,28 @@ def top_k_diversos(
     distancia_minima: int = 1,
 ) -> List[Cromosoma]:
     """
-    Selecciona K cromosomas con fitness alto Y suficientemente distintos entre sí.
+    Extractor Greedy de nichos y diversidad fenotípica (Mahfoud, 1995):
+    Selecciona un portafolio de K cromosomas con alto fitness y garantizando
+    una separación estructural mínima entre sí basada en Distancia de Hamming.
 
     Algoritmo:
-    1. Filtra cromosomas con fitness > 0.
-    2. Dedup estricto: elimina duplicados (distancia == 0) por seguridad.
-    3. Ordena por fitness descendente.
-    4. Toma el mejor sí o sí.
-    5. Para cada siguiente candidato, lo incluye solo si su distancia a TODOS
-       los ya elegidos es >= distancia_minima.
-    6. Para cuando tiene K o se agotan candidatos.
+    1. Filtra soluciones factibles (aptitud no negativa: fitness >= 0.0).
+    2. Deduplicación estricta: descarta réplicas genéticas idénticas (d_H == 0).
+    3. Ordena los candidatos de forma descendente por aptitud (elitismo).
+    4. Selecciona de forma incondicional a la mejor solución global.
+    5. Para cada candidato subsecuente, lo incorpora si y solo si su distancia
+       de Hamming respecto a TODOS los ya seleccionados cumple:
+           d_H(candidato, elegido) >= distancia_minima (defecto: 1 sección)
+    6. Detiene el proceso al completar K soluciones o agotar el espacio factible.
 
-    `distancia_minima=1`: al menos UNA sección distinta. Subir el valor fuerza
-    horarios más radicalmente diferentes.
-
-    Si no hay K cromosomas suficientemente diversos, devuelve MENOS. En el caso
-    extremo de un espacio de búsqueda con una sola solución óptima, devuelve 1
-    (el caller debe avisar al usuario que no hay más combinaciones posibles).
+    Parámetros:
+    - `distancia_minima`: Cota inferior de diferencia de secciones (d_H >= 1).
+    - Si el espacio admite menos de K alternativas viables, retorna exactamente
+      las encontradas informando el límite físico al usuario.
     """
-    # Solo cromosomas válidos
-    poblacion_valida = [c for c, f in zip(poblacion, fitness) if f > 0]
-    fitness_valido = [f for f in fitness if f > 0]
+    # Solo cromosomas válidos (factibles, fitness >= 0.0)
+    poblacion_valida = [c for c, f in zip(poblacion, fitness) if f >= 0.0]
+    fitness_valido = [f for f in fitness if f >= 0.0]
     if not poblacion_valida:
         return []
 

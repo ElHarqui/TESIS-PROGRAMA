@@ -13,10 +13,22 @@ Estructura:
 import asyncio
 import json
 import os
+import sys
 import time
 from datetime import time as dt_time
 from pathlib import Path
-from typing import List
+from typing import List, Optional
+
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 import nest_asyncio
 import streamlit as st
@@ -32,16 +44,25 @@ from data import (
     parsear_plan_estudios,
     parsear_prematricula,
     parsear_respuesta,
+    SumCredencialesInvalidasError,
+    SumDatosIncompletosError,
+    SumError,
+    SumMantenimientoError,
+    SumTimeoutError,
 )
 from fitness import (
     ContextoAlumno,
     PreferenciasHorario,
-    cargar_preferencias_horarios,
-    cargar_scores_docentes,
     evaluar_fitness,
     preferencia_cupos,
     preferencia_docentes,
     preferencia_horarios,
+)
+from fitness.preferencias import (
+    cargar_preferencias_horarios,
+    guardar_preferencias_horarios,
+    cargar_scores_docentes,
+    guardar_scores_docentes,
 )
 from fitness.contexto import (
     DENSIDAD_COMPACTO,
@@ -52,8 +73,13 @@ from fitness.contexto import (
     TURNO_NOCHE,
     TURNO_TARDE,
 )
-from genetic import ejecutar_ga, generar_poblacion_inicial, top_k_diversos
-from genetic.population import _es_seccion_valida
+from services import (
+    ejecutar_optimizacion,
+    detectar_hard_activas,
+    detectar_violaciones_bloque,
+    generar_recomendaciones_horario,
+)
+from models import Cromosoma, HorarioResultado
 from output import exportar_excel, exportar_pdf
 from output.visualizer import (
     DIAS,
@@ -62,7 +88,7 @@ from output.visualizer import (
     HORA_INICIO,
     _abreviar_asignatura,
 )
-from config import cargar_config
+from config import cargar_config, ParametrosGA
 
 
 # Playwright es async; Streamlit corre en su propio loop. Permitir loops anidados.
@@ -73,9 +99,17 @@ load_dotenv()
 
 CACHE_KEY = "datos_sum"
 
-PALETA = [
-    "#FFE5CC", "#CCE5FF", "#CCFFCC", "#FFFFCC", "#FFCCE5",
-    "#E5CCFF", "#CCFFFF", "#FFD9B3", "#B3D9FF", "#D4FFD4",
+PALETA_CURSOS = [
+    {"bg": "#EEF2FF", "border": "#4F46E5", "text": "#1E1B4B", "badge_bg": "#E0E7FF", "badge_text": "#3730A3"},  # Indigo
+    {"bg": "#ECFDF5", "border": "#059669", "text": "#064E3B", "badge_bg": "#D1FAE5", "badge_text": "#047857"},  # Esmeralda
+    {"bg": "#FFFBEB", "border": "#D97706", "text": "#78350F", "badge_bg": "#FEF3C7", "badge_text": "#B45309"},  # Ámbar
+    {"bg": "#F5F3FF", "border": "#7C3AED", "text": "#4C1D95", "badge_bg": "#EDE9FE", "badge_text": "#6D28D9"},  # Violeta
+    {"bg": "#EFF6FF", "border": "#2563EB", "text": "#1E3A8A", "badge_bg": "#DBEAFE", "badge_text": "#1D4ED8"},  # Azul
+    {"bg": "#FDF2F8", "border": "#DB2777", "text": "#831843", "badge_bg": "#FCE7F3", "badge_text": "#BE185D"},  # Rosa
+    {"bg": "#F0FDFA", "border": "#0D9488", "text": "#134E4A", "badge_bg": "#CCFBF1", "badge_text": "#0F766E"},  # Teal
+    {"bg": "#FFF7ED", "border": "#EA580C", "text": "#7C2D12", "badge_bg": "#FFEDD5", "badge_text": "#C2410C"},  # Naranja
+    {"bg": "#F8FAFC", "border": "#475569", "text": "#0F172A", "badge_bg": "#E2E8F0", "badge_text": "#334155"},  # Pizarra
+    {"bg": "#FAF5FF", "border": "#9333EA", "text": "#581C87", "badge_bg": "#F3E8FF", "badge_text": "#7E22CE"},  # Púrpura
 ]
 
 
@@ -84,7 +118,7 @@ PALETA = [
 # ─────────────────────────────────────────────────────────────────────
 
 st.set_page_config(
-    page_title="Optimizador de horarios UNMSM",
+    page_title="Optimizador de Horarios UNMSM",
     page_icon="🎓",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -98,133 +132,449 @@ st.set_page_config(
 
 
 # ─────────────────────────────────────────────────────────────────────
-# CSS PERSONALIZADO (estilo profesional)
+# CSS PERSONALIZADO (Diseño Institucional Premium)
 # ─────────────────────────────────────────────────────────────────────
 
 _CUSTOM_CSS = """
 <style>
-  /* Ocultar chrome innecesario de Streamlit para un aspecto pulido */
+  @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+  /* Tipografía general para elementos de texto sin pisar los iconos de Streamlit */
+  html, body, p, h1, h2, h3, h4, h5, h6, label, input, textarea {
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+
+  /* PROTECCIÓN ESTRICTA de las fuentes de iconos de Streamlit (Material Symbols / Icons) */
+  [data-testid*="stIcon"],
+  [data-testid*="Icon"],
+  .material-symbols-rounded,
+  .material-symbols-outlined,
+  .material-icons,
+  [class*="material-symbols"],
+  [class*="material-icons"],
+  button[data-testid="stSidebarCollapseButton"] *,
+  button[data-testid="collapsedControl"] *,
+  details summary [class*="st-"],
+  [data-baseweb="tab"] [class*="st-"] {
+    font-family: "Material Symbols Rounded", "Material Symbols Outlined", "Material Icons", sans-serif !important;
+    font-style: normal !important;
+    text-transform: none !important;
+    letter-spacing: normal !important;
+    word-wrap: normal !important;
+    white-space: nowrap !important;
+    direction: ltr !important;
+  }
+
+  /* Ocultar decoraciones por defecto de Streamlit y barra superior vacía */
   #MainMenu {visibility: hidden;}
   footer {visibility: hidden;}
   [data-testid="stStatusWidget"] {display: none;}
-
-  /* Contenedor principal con menos padding vertical y un ancho contenido */
-  .block-container {
-    padding-top: 1.5rem;
-    padding-bottom: 2rem;
-    max-width: 1400px;
+  header[data-testid="stHeader"],
+  [data-testid="stHeader"] {
+    background: transparent !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
   }
 
-  /* Header institucional */
+  /* Contenedor principal: pegado al tope superior y con ancho completo responsivo */
+  .main .block-container,
+  div[data-testid="stAppViewContainer"] .block-container,
+  .block-container {
+    padding-top: 0.75rem !important;
+    padding-bottom: 2rem !important;
+    padding-left: 2rem !important;
+    padding-right: 2rem !important;
+    max-width: 100% !important;
+  }
+
+  /* Contenedor de la barra lateral ajustado al tope */
+  section[data-testid="stSidebar"] div.block-container {
+    padding-top: 1rem !important;
+    padding-bottom: 2rem !important;
+  }
+
+  /* Header institucional con degradado Granate UNMSM */
   .app-header {
-    background: linear-gradient(135deg, #8B1A1A 0%, #6B1414 100%);
+    background: linear-gradient(135deg, #7C1010 0%, #580B0B 60%, #3D0707 100%);
     color: #FFFFFF;
-    padding: 1.25rem 1.75rem;
-    border-radius: 10px;
+    padding: 1.35rem 1.85rem;
+    border-radius: 12px;
     margin-bottom: 1.5rem;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    box-shadow: 0 4px 15px rgba(124, 16, 16, 0.22);
+    border-bottom: 3px solid #D97706;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 1rem;
+    gap: 1.5rem;
+    flex-wrap: wrap;
   }
   .app-header h1 {
     margin: 0;
-    font-size: 1.5rem;
-    font-weight: 700;
-    letter-spacing: -0.01em;
+    font-size: 1.55rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: #FFFFFF;
   }
   .app-header .subtitulo {
-    opacity: 0.85;
-    font-size: 0.9rem;
-    margin-top: 0.2rem;
-  }
-  .app-header .alumno-info {
-    text-align: right;
-    font-size: 0.85rem;
-    line-height: 1.4;
-  }
-  .app-header .alumno-info strong {
-    font-size: 0.95rem;
+    opacity: 0.9;
+    font-size: 0.88rem;
+    margin-top: 0.25rem;
+    font-weight: 400;
+    color: #FEE2E2;
   }
 
-  /* Cards de métricas coloreadas por concepto */
-  .metrica-card {
-    background: #FFFFFF;
-    border: 1px solid #E5E7EB;
-    border-left: 4px solid #8B1A1A;
-    border-radius: 8px;
-    padding: 0.75rem 1rem;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  /* Chips del alumno */
+  .alumno-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    justify-content: flex-end;
   }
-  .metrica-card .label {
+  .badge-chip {
+    background: rgba(255, 255, 255, 0.15);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 9999px;
+    padding: 0.25rem 0.75rem;
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: #FFFFFF;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+  .badge-chip.destacado {
+    background: #D97706;
+    border-color: #F59E0B;
+    color: #FFFFFF;
+    font-weight: 700;
+  }
+
+  /* Tarjetas KPI de Métricas */
+  .kpi-card {
+    background: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 10px;
+    padding: 0.85rem 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    position: relative;
+    overflow: hidden;
+  }
+  .kpi-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 14px rgba(0, 0, 0, 0.06);
+  }
+  .kpi-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 4px;
+    height: 100%;
+  }
+  .kpi-card.fitness::before   { background: #7C1010; }
+  .kpi-card.horarios::before  { background: #2563EB; }
+  .kpi-card.docentes::before  { background: #059669; }
+  .kpi-card.cupos::before     { background: #D97706; }
+  .kpi-card.creditos::before  { background: #7C3AED; }
+
+  .kpi-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.35rem;
+  }
+  .kpi-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #64748B;
+  }
+  .kpi-icon {
+    font-size: 1.1rem;
+  }
+  .kpi-value {
+    font-size: 1.55rem;
+    font-weight: 800;
+    color: #0F172A;
+    line-height: 1.1;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .kpi-desc {
     font-size: 0.75rem;
-    color: #6B7280;
+    color: #94A3B8;
+    margin-top: 0.25rem;
+    font-weight: 500;
+  }
+
+  /* Grilla del horario estilo Google Calendar / Notion */
+  .horario-wrap {
+    background: #FFFFFF;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    border: 1px solid #E2E8F0;
+    margin: 0.75rem 0 1.25rem 0;
+  }
+  .horario {
+    border-collapse: separate;
+    border-spacing: 0;
+    width: 100%;
+    table-layout: fixed;
+  }
+  .horario th {
+    background: #F8FAFC;
+    color: #334155;
+    font-weight: 700;
+    font-size: 0.8rem;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    font-weight: 600;
-    margin-bottom: 0.2rem;
+    padding: 0.75rem 0.5rem;
+    text-align: center;
+    border-bottom: 2px solid #CBD5E1;
+    border-right: 1px solid #E2E8F0;
   }
-  .metrica-card .valor {
-    font-size: 1.5rem;
+  .horario th:last-child {
+    border-right: none;
+  }
+  .horario td {
+    border-bottom: 1px solid #F1F5F9;
+    border-right: 1px solid #F1F5F9;
+    padding: 3px;
+    vertical-align: top;
+    height: 52px;
+  }
+  .horario td:last-child {
+    border-right: none;
+  }
+  .horario td.hora {
+    background: #F8FAFC;
+    color: #64748B;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+    width: 68px;
+    text-align: center;
+    vertical-align: middle;
+    border-right: 1px solid #CBD5E1;
+    user-select: none;
+  }
+
+  /* Tarjeta interna de evento en la celda */
+  .evento-card {
+    border-radius: 6px;
+    padding: 4px 6px;
+    height: 100%;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    border-left-width: 4px;
+    border-left-style: solid;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    overflow: hidden;
+  }
+  .evento-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 10px rgba(0,0,0,0.12);
+    z-index: 5;
+  }
+  .evento-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 2px;
+  }
+  .evento-asig {
     font-weight: 700;
-    color: #111827;
-    line-height: 1.2;
+    font-size: 0.82rem;
+    line-height: 1.1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  .metrica-card.fitness   {border-left-color: #8B1A1A;}
-  .metrica-card.horarios  {border-left-color: #1D4ED8;}
-  .metrica-card.docentes  {border-left-color: #059669;}
-  .metrica-card.cupos     {border-left-color: #D97706;}
-  .metrica-card.creditos  {border-left-color: #7C3AED;}
+  .evento-sec {
+    font-size: 0.68rem;
+    font-weight: 700;
+    border-radius: 4px;
+    padding: 1px 4px;
+    white-space: nowrap;
+  }
+  .evento-prof {
+    font-size: 0.7rem;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 2px;
+    opacity: 0.9;
+  }
 
-  /* Sidebar limpio */
+  /* Violaciones en Fallback */
+  .evento-card.violada {
+    box-shadow: 0 0 0 2px #DC2626 !important;
+    position: relative;
+  }
+  .evento-card.violada::after {
+    content: '⚠️';
+    position: absolute;
+    top: 1px;
+    right: 2px;
+    font-size: 0.75rem;
+  }
+
+  /* Sidebar Styling */
   section[data-testid="stSidebar"] {
-    background-color: #FAFAF7;
-    border-right: 1px solid #E5E7EB;
+    background-color: #F8FAFC;
+    border-right: 1px solid #E2E8F0;
   }
-  section[data-testid="stSidebar"] h1,
-  section[data-testid="stSidebar"] h2,
-  section[data-testid="stSidebar"] h3 {
-    color: #1F2937;
-  }
-  .sidebar-caja {
-    background: #FFFFFF;
-    border: 1px solid #E5E7EB;
-    border-radius: 8px;
-    padding: 0.75rem;
+  .sidebar-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 0 1rem 0;
     margin-bottom: 0.75rem;
+    border-bottom: 1px solid #E2E8F0;
   }
-  .sidebar-caja .nombre {
+  .sidebar-brand-icon {
+    font-size: 1.8rem;
+    background: #FEE2E2;
+    border-radius: 10px;
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .sidebar-brand-text h2 {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 800;
+    color: #7C1010;
+    line-height: 1.1;
+  }
+  .sidebar-brand-text span {
+    font-size: 0.75rem;
+    color: #64748B;
+    font-weight: 500;
+  }
+
+  /* User Card en Sidebar */
+  .user-card {
+    background: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 10px;
+    padding: 0.85rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+  }
+  .user-card .user-name {
+    font-weight: 700;
+    font-size: 0.92rem;
+    color: #0F172A;
+  }
+  .user-card .user-meta {
+    font-size: 0.78rem;
+    color: #64748B;
+    margin-top: 0.2rem;
+  }
+  .user-card .user-school {
+    font-size: 0.75rem;
+    color: #7C1010;
     font-weight: 600;
-    font-size: 0.95rem;
-    color: #111827;
-  }
-  .sidebar-caja .detalle {
-    font-size: 0.8rem;
-    color: #6B7280;
-    margin-top: 0.15rem;
+    margin-top: 0.35rem;
   }
 
-  /* Tablas de leyenda y datos */
-  .stDataFrame {border-radius: 8px; overflow: hidden;}
-
-  /* Botones */
-  .stButton > button {
-    border-radius: 6px;
-    font-weight: 500;
+  /* Botones principales con identidad UNMSM */
+  div.stButton > button[kind="primary"] {
+    background: linear-gradient(135deg, #7C1010 0%, #991B1B 100%) !important;
+    color: #FFFFFF !important;
+    border: none !important;
+    border-radius: 8px !important;
+    padding: 0.55rem 1.25rem !important;
+    font-weight: 600 !important;
+    box-shadow: 0 2px 6px rgba(124, 16, 16, 0.25) !important;
+    transition: all 0.15s ease !important;
   }
-  .stDownloadButton > button {
-    border-radius: 6px;
-    font-weight: 500;
+  div.stButton > button[kind="primary"]:hover {
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 12px rgba(124, 16, 16, 0.35) !important;
   }
 
-  /* Tabs con más aire y color activo institucional */
+  /* Tabs */
   .stTabs [data-baseweb="tab-list"] {
-    gap: 0.25rem;
+    gap: 0.5rem;
+    border-bottom: 1px solid #E2E8F0;
+    padding-bottom: 2px;
   }
   .stTabs [data-baseweb="tab"] {
-    padding: 0.6rem 1.1rem;
-    font-weight: 500;
+    border-radius: 6px;
+    padding: 0.55rem 1.1rem;
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: #64748B;
+    transition: all 0.15s ease;
+  }
+  .stTabs [data-baseweb="tab"]:hover {
+    background: #F1F5F9;
+    color: #0F172A;
+  }
+  .stTabs [aria-selected="true"] {
+    background: #FEE2E2 !important;
+    color: #7C1010 !important;
+    border-bottom: 2px solid #7C1010 !important;
+  }
+
+  /* Onboarding / Feature cards */
+  .onboarding-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1.25rem;
+    margin: 1.5rem 0;
+  }
+  .feature-card {
+    background: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 12px;
+    padding: 1.35rem;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+  .feature-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 20px rgba(0,0,0,0.08);
+  }
+  .feature-icon-wrap {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.4rem;
+    margin-bottom: 0.85rem;
+  }
+  .feature-icon-wrap.sum     { background: #FEE2E2; color: #7C1010; }
+  .feature-icon-wrap.prefs   { background: #FEF3C7; color: #B45309; }
+  .feature-icon-wrap.ga      { background: #EEF2FF; color: #4338CA; }
+  .feature-title {
+    font-weight: 700;
+    font-size: 1.05rem;
+    color: #0F172A;
+    margin-bottom: 0.4rem;
+  }
+  .feature-text {
+    font-size: 0.85rem;
+    color: #64748B;
+    line-height: 1.5;
   }
 </style>
 """
@@ -256,6 +606,7 @@ def _init_state():
         "modo_fallback": False,
         "hard_relajadas": [],
         "contexto_original": None,   # se guarda para poder marcar violaciones en la grilla del fallback
+        "historial_convergencia": [],
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -265,12 +616,23 @@ def _init_state():
 _init_state()
 
 
+def _usuario_actual() -> str:
+    """Retorna el código/identificador del usuario logeado en la sesión actual."""
+    if st.session_state.get("credenciales_usuario"):
+        return str(st.session_state.credenciales_usuario).strip()
+    if st.session_state.get("alumno") and hasattr(st.session_state.alumno, "raw"):
+        cod = st.session_state.alumno.raw.get("codAlumno")
+        if cod:
+            return str(cod).strip()
+    return ""
+
+
 # ─────────────────────────────────────────────────────────────────────
 # HELPERS DE BACKEND (envuelven el async)
 # ─────────────────────────────────────────────────────────────────────
 
 def _scrape_o_cargar_cache(login: str, password: str, forzar_scrape: bool):
-    cache = Cache(ttl=3600)
+    cache = Cache(usuario=login)
     cache.limpiar_expirados()
 
     datos = cache.get(CACHE_KEY)
@@ -305,6 +667,11 @@ def _parsear_y_guardar(datos_raw: dict):
             if prog_alumno.get(k):
                 st.session_state.alumno.raw[k] = prog_alumno[k]
 
+    # Intentar restaurar automáticamente el último cálculo de horarios del usuario
+    u = _usuario_actual()
+    if u:
+        _restaurar_cache_ga(u)
+
 
 def _construir_contexto(scores_docentes: dict, prefs_horario: PreferenciasHorario) -> ContextoAlumno:
     config = cargar_config()
@@ -316,63 +683,6 @@ def _construir_contexto(scores_docentes: dict, prefs_horario: PreferenciasHorari
         prefs_horario=prefs_horario,
         pesos=config.pesos,
     )
-
-
-def _hard_configurables_activas(prefs: PreferenciasHorario) -> List[str]:
-    """
-    Devuelve los nombres de las HARD configurables por el alumno que están activas.
-    Vacío si el alumno no configuró ninguna (defaults: [], None, None).
-    Se usa para decidir si vale la pena disparar el fallback y para el banner.
-    """
-    activas = []
-    if prefs.dias_libres_obligatorios:
-        activas.append("dias_libres_obligatorios")
-    if prefs.hora_min:
-        activas.append("hora_min")
-    if prefs.hora_max:
-        activas.append("hora_max")
-    return activas
-
-
-def _relajar_prefs(prefs: PreferenciasHorario) -> PreferenciasHorario:
-    """
-    Devuelve una copia de `prefs` con las 3 HARD configurables desactivadas
-    (`[]`, `None`, `None`). Preserva las SOFT (turno, dias deseados, densidad).
-    """
-    import dataclasses
-    return dataclasses.replace(
-        prefs,
-        dias_libres_obligatorios=[],
-        hora_min=None,
-        hora_max=None,
-    )
-
-
-def _violaciones_bloque(bloque, prefs: PreferenciasHorario) -> List[str]:
-    """
-    Devuelve la lista de motivos por los que este bloque viola las HARD
-    configurables. Cada motivo es uno de: "dia_libre", "hora_min", "hora_max".
-    Vacía si el bloque no viola ninguna.
-
-    Reutiliza la lógica de verificar_dias_libres_obligatorios y verificar_rango_horario
-    (fitness/hard_constraints.py) pero a nivel de un solo bloque para poder
-    marcar celdas específicas en la grilla.
-    """
-    from fitness.hard_constraints import _hhmm_a_minutos
-
-    motivos = []
-    if bloque.dia and bloque.dia in prefs.dias_libres_obligatorios:
-        motivos.append("dia_libre")
-    if bloque.horaInicio is not None and bloque.horaFin is not None:
-        if prefs.hora_min:
-            min_int = _hhmm_a_minutos(prefs.hora_min)
-            if bloque.hora_inicio_int < min_int:
-                motivos.append("hora_min")
-        if prefs.hora_max:
-            max_int = _hhmm_a_minutos(prefs.hora_max)
-            if bloque.hora_fin_int > max_int:
-                motivos.append("hora_max")
-    return motivos
 
 
 # Texto amigable por motivo per-bloque (usado en tooltips y expanders)
@@ -390,137 +700,93 @@ _HARD_DESC = {
 }
 
 
-def _recomendaciones_por_horario(cromosoma, prefs: PreferenciasHorario) -> List[dict]:
-    """
-    Recorre las secciones del cromosoma y devuelve una lista con las secciones
-    que tienen al menos un bloque que viola alguna HARD configurable. Cada item:
-        {
-          "asignatura": "MINERIA DE DATOS",
-          "seccion": 2,
-          "docente": "COSME FELIX",
-          "bloques_violadores": [
-              {"dia": "SABADO", "hora": "08:00-10:00", "motivos": ["dia_libre"]},
-              ...
-          ]
+def _guardar_cache_ga(usuario: str, resultado) -> None:
+    """Persiste los resultados de la optimización en el disco para el usuario actual."""
+    if not usuario or not getattr(resultado, "horarios", None):
+        return
+    try:
+        cache = Cache(usuario=usuario)
+        datos_guardar = {
+            "duracion": getattr(resultado, "duracion", 0.0),
+            "gen_validos_ini": getattr(resultado, "gen_validos_ini", 0),
+            "gen_validos_fin": getattr(resultado, "gen_validos_fin", 0),
+            "modo_fallback": getattr(resultado, "modo_fallback", False),
+            "hard_relajadas": getattr(resultado, "hard_relajadas", []),
+            "omitidas": getattr(resultado, "omitidas", []),
+            "fitness_fin": getattr(resultado, "fitness_fin", []),
+            "historial_convergencia": getattr(resultado, "historial_convergencia", []),
+            "horarios": [
+                [[s.codAsignatura, s.codSeccion] for s in c.secciones]
+                for c in resultado.horarios
+            ],
         }
-    Solo se usa cuando modo_fallback está activo.
+        cache.set("ultimo_resultado_ga", datos_guardar)
+    except Exception:
+        pass
+
+
+def _restaurar_cache_ga(usuario: str) -> bool:
+    """Restaura los últimos horarios y curva de convergencia guardados en caché si la sesión está vacía."""
+    if not usuario or not st.session_state.get("secciones") or st.session_state.get("horarios"):
+        return False
+    try:
+        cache = Cache(usuario=usuario)
+        datos = cache.get("ultimo_resultado_ga")
+        if not datos or not datos.get("horarios"):
+            return False
+
+        sec_map = {(s.codAsignatura, s.codSeccion): s for s in st.session_state.secciones}
+        horarios_rest = []
+        for c_firmas in datos["horarios"]:
+            secs_cromo = [sec_map[tuple(f)] for f in c_firmas if tuple(f) in sec_map]
+            if secs_cromo:
+                horarios_rest.append(Cromosoma(secs_cromo))
+
+        if not horarios_rest:
+            return False
+
+        st.session_state.horarios = horarios_rest
+        st.session_state.duracion_ga = datos.get("duracion", 0.0)
+        st.session_state.gen_validos_ini = datos.get("gen_validos_ini", 0)
+        st.session_state.gen_validos_fin = datos.get("gen_validos_fin", 0)
+        st.session_state.modo_fallback = datos.get("modo_fallback", False)
+        st.session_state.hard_relajadas = datos.get("hard_relajadas", [])
+        st.session_state.omitidas = datos.get("omitidas", [])
+        st.session_state.fitness_fin = datos.get("fitness_fin", [])
+        st.session_state.historial_convergencia = datos.get("historial_convergencia", [])
+        st.session_state.ga_ya_corrio = True
+        return True
+    except Exception:
+        return False
+
+
+def _correr_ga(contexto: ContextoAlumno, config_ga: Optional[ParametrosGA] = None):
     """
-    items = []
-    for s in cromosoma.secciones:
-        bloques_violadores = []
-        for b in s.bloques:
-            motivos = _violaciones_bloque(b, prefs)
-            if motivos:
-                bloques_violadores.append({
-                    "dia": b.dia,
-                    "hora": f"{b.horaInicio}-{b.horaFin}",
-                    "motivos": motivos,
-                })
-        if bloques_violadores:
-            items.append({
-                "asignatura": s.desAsignatura.strip(),
-                "seccion": s.codSeccion,
-                "docente": s.docente_completo,
-                "bloques_violadores": bloques_violadores,
-            })
-    return items
-
-
-def _ejecutar_pase_ga(contexto: ContextoAlumno):
+    Ejecuta la optimización delegando al servicio de dominio (optimizer_service).
+    Maneja el pase estándar, el fallback y la recolección de métricas de convergencia.
     """
-    Un pase del GA con el contexto dado. Devuelve dict con top, fitness_fin,
-    omitidas, duracion, gen_validos_ini, gen_validos_fin.
-    """
-    config = cargar_config().ga
-
-    asignaturas = [p["codAsignatura"] for p in st.session_state.prematricula]
-    sec_por_asig = {}
-    for s in st.session_state.secciones:
-        if _es_seccion_valida(s):
-            sec_por_asig.setdefault(s.codAsignatura, []).append(s)
-
-    poblacion, omitidas = generar_poblacion_inicial(
-        asignaturas,
-        st.session_state.secciones,
-        tamano_poblacion=config.tamano_poblacion,
-        seed=config.seed,
+    codigos_asig = [p["codAsignatura"] for p in st.session_state.prematricula]
+    resultado = ejecutar_optimizacion(
+        secciones=st.session_state.secciones,
+        codigos_asignaturas=codigos_asig,
+        contexto=contexto,
+        config_ga=config_ga,
     )
-    fitness_ini = [evaluar_fitness(c, contexto) for c in poblacion]
-
-    t0 = time.time()
-    poblacion_final = ejecutar_ga(
-        poblacion,
-        evaluador=lambda c: evaluar_fitness(c, contexto),
-        secciones_por_asig=sec_por_asig,
-        max_generaciones=config.generaciones,
-        tasa_mutacion=config.tasa_mutacion,
-        tamano_torneo=config.tamano_torneo,
-        elitismo=config.elitismo,
-    )
-    duracion = time.time() - t0
-
-    fitness_fin = [evaluar_fitness(c, contexto) for c in poblacion_final]
-    top = top_k_diversos(poblacion_final, fitness_fin, k=config.top_k, distancia_minima=config.distancia_minima)
-
-    return {
-        "top": top,
-        "fitness_fin": fitness_fin,
-        "omitidas": omitidas,
-        "duracion": duracion,
-        "gen_validos_ini": sum(1 for f in fitness_ini if f > 0),
-        "gen_validos_fin": sum(1 for f in fitness_fin if f > 0),
-    }
-
-
-def _correr_ga(contexto: ContextoAlumno):
-    """
-    Ejecuta el GA con fallback:
-    1. Primer pase con el contexto original (respetando TODAS las HARD del alumno).
-    2. Si el top queda vacío Y el alumno tiene HARD configurables activas, corre
-       un segundo pase con esas HARD relajadas. Marca modo_fallback=True y guarda
-       los horarios relajados junto con la lista de HARD relajadas.
-    3. Si tampoco hay hard configurables o el segundo pase también queda vacío,
-       deja horarios=[] y modo_fallback=False. La UI mostrará mensaje de problema
-       estructural.
-
-    Guarda todo en session_state y marca ga_ya_corrio=True.
-    """
-    resultado = _ejecutar_pase_ga(contexto)
-    st.session_state.contexto_original = contexto
-
-    hard_activas = _hard_configurables_activas(contexto.prefs_horario)
-
-    if resultado["top"] or not hard_activas:
-        # Camino normal: hay horarios, o no hay hard configurables para relajar
-        st.session_state.horarios = resultado["top"]
-        st.session_state.fitness_fin = resultado["fitness_fin"]
-        st.session_state.omitidas = resultado["omitidas"]
-        st.session_state.duracion_ga = resultado["duracion"]
-        st.session_state.gen_validos_ini = resultado["gen_validos_ini"]
-        st.session_state.gen_validos_fin = resultado["gen_validos_fin"]
-        st.session_state.modo_fallback = False
-        st.session_state.hard_relajadas = []
-    else:
-        # Primer pase vacío + hay hard configurables → relajarlas y reintentar
-        contexto_relajado = ContextoAlumno(
-            prerequisitos=contexto.prerequisitos,
-            aprobados=contexto.aprobados,
-            max_creditos=contexto.max_creditos,
-            scores_docentes=contexto.scores_docentes,
-            prefs_horario=_relajar_prefs(contexto.prefs_horario),
-            pesos=contexto.pesos,
-        )
-        r2 = _ejecutar_pase_ga(contexto_relajado)
-        st.session_state.horarios = r2["top"]
-        st.session_state.fitness_fin = r2["fitness_fin"]
-        st.session_state.omitidas = r2["omitidas"]
-        st.session_state.duracion_ga = resultado["duracion"] + r2["duracion"]
-        st.session_state.gen_validos_ini = r2["gen_validos_ini"]
-        st.session_state.gen_validos_fin = r2["gen_validos_fin"]
-        st.session_state.modo_fallback = bool(r2["top"])
-        st.session_state.hard_relajadas = hard_activas if r2["top"] else []
-
+    st.session_state.horarios = resultado.horarios
+    st.session_state.fitness_fin = resultado.fitness_fin
+    st.session_state.omitidas = resultado.omitidas
+    st.session_state.duracion_ga = resultado.duracion
+    st.session_state.gen_validos_ini = resultado.gen_validos_ini
+    st.session_state.gen_validos_fin = resultado.gen_validos_fin
+    st.session_state.modo_fallback = resultado.modo_fallback
+    st.session_state.hard_relajadas = resultado.hard_relajadas
+    st.session_state.contexto_original = resultado.contexto_original
+    st.session_state.historial_convergencia = getattr(resultado, "historial_convergencia", [])
     st.session_state.ga_ya_corrio = True
+
+    # Persistir en el almacenamiento local del usuario
+    u = _usuario_actual()
+    _guardar_cache_ga(u, resultado)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -550,23 +816,17 @@ def _apellido_corto(apePaterno: str, max_chars: int = 14) -> str:
 
 def _render_grilla_html(cromosoma, contexto_original: ContextoAlumno = None) -> str:
     """
-    Renderiza la grilla del horario como tabla HTML coloreada.
+    Renderiza la grilla del horario con diseño visual de calendario moderno.
 
-    Cada celda con clase muestra 3 líneas:
-      1. Código abreviado de la asignatura (ej. DSM).
-      2. Sección (ej. Sec 2).
-      3. Apellido paterno del docente (truncado).
+    Cada celda con clase muestra una tarjeta (.evento-card):
+      1. Top: Asignatura abreviada en negrita + Badge de sección estilizado.
+      2. Bottom: Docente a cargo con avatar sutil.
 
-    Datos completos (nombre completo del docente, cupo, créditos) están en
-    la tabla-leyenda debajo de la grilla.
-
-    Si `contexto_original` se pasa (modo fallback), las celdas cuyos bloques
-    violan alguna HARD configurable del alumno se marcan con borde rojo y un
-    icono de advertencia. Se usa cuando el fallback está activo para señalar
-    exactamente qué bloques rompen las reglas estrictas.
+    Si `contexto_original` se pasa (modo fallback), los bloques que violan
+    alguna HARD configurable del alumno se marcan con estilo de advertencia (violada).
     """
     prefs_para_violar = None
-    if contexto_original is not None and _hard_configurables_activas(contexto_original.prefs_horario):
+    if contexto_original is not None and detectar_hard_activas(contexto_original.prefs_horario):
         prefs_para_violar = contexto_original.prefs_horario
 
     # Mapear celdas (hora, día) → info completa para el render
@@ -579,7 +839,7 @@ def _render_grilla_html(cromosoma, contexto_original: ContextoAlumno = None) -> 
         for b in s.bloques:
             if b.dia not in DIAS or b.horaInicio is None or b.horaFin is None:
                 continue
-            violaciones = _violaciones_bloque(b, prefs_para_violar) if prefs_para_violar else []
+            violaciones = detectar_violaciones_bloque(b, prefs_para_violar) if prefs_para_violar else []
             info_celda = {
                 "abrev": abrev,
                 "seccion": s.codSeccion,
@@ -592,7 +852,7 @@ def _render_grilla_html(cromosoma, contexto_original: ContextoAlumno = None) -> 
             for h in range(max(h_ini, HORA_INICIO), min(h_fin, HORA_FIN)):
                 celdas[(h, b.dia)] = info_celda
 
-    color_de = {cod: PALETA[i % len(PALETA)] for i, cod in enumerate(asignaturas_orden)}
+    tema_de = {cod: PALETA_CURSOS[i % len(PALETA_CURSOS)] for i, cod in enumerate(asignaturas_orden)}
 
     # Solo horas con clase
     if celdas:
@@ -601,67 +861,34 @@ def _render_grilla_html(cromosoma, contexto_original: ContextoAlumno = None) -> 
     else:
         horas = list(range(HORA_INICIO, HORA_FIN))
 
-    # HTML — color de texto FIJO en oscuro para celdas pintadas y cabeceras,
-    # asi la grilla es legible tanto en modo claro como oscuro de Streamlit.
-    # Las celdas vacias heredan el color del tema (no se fija).
     html = [
-        "<style>",
-        ".horario-wrap {",
-        "  border-radius: 10px; overflow: hidden;",
-        "  box-shadow: 0 1px 3px rgba(0,0,0,0.08);",
-        "  border: 1px solid #E5E7EB;",
-        "  margin: 0.5rem 0 1rem 0;",
-        "}",
-        ".horario {",
-        "  border-collapse: collapse; width: 100%; font-size: 0.85em;",
-        "  background: #FFFFFF; table-layout: fixed;",
-        "}",
-        ".horario th, .horario td {",
-        "  border: 1px solid #E5E7EB; padding: 6px 4px; text-align: center;",
-        "  vertical-align: middle; overflow: hidden; text-overflow: ellipsis;",
-        "}",
-        ".horario th {background: #F5F5F0; color: #1F2937; font-weight: 600;}",
-        ".horario td.hora {background: #FAFAF7; color: #6B7280; font-weight: 600; width: 62px;}",
-        ".horario td.clase {color: #1F2937; padding: 6px 3px; line-height: 1.2;}",
-        ".horario td.clase .asig {font-weight: 700; font-size: 0.95em;}",
-        ".horario td.clase .sec {font-size: 0.75em; color: #4B5563; margin-top: 1px;}",
-        ".horario td.clase .prof {",
-        "  font-size: 0.72em; color: #374151; margin-top: 3px;",
-        "  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
-        "}",
-        # Celda violada: mantiene el color pastel de la asignatura pero suma un
-        # borde rojo grueso via box-shadow inset (no altera el layout de la tabla)
-        # y un icono ⚠ en la esquina superior derecha.
-        ".horario td.clase.violada {",
-        "  box-shadow: inset 0 0 0 3px #DC2626; position: relative;",
-        "}",
-        ".horario td.clase.violada::after {",
-        "  content: '⚠'; position: absolute; top: 1px; right: 3px;",
-        "  color: #DC2626; font-size: 0.85em; font-weight: 700;",
-        "}",
-        "</style>",
         "<div class='horario-wrap'>",
         "<table class='horario'>",
-        "<tr><th style='width:62px;'>HORA</th>" + "".join(f"<th>{d}</th>" for d in DIAS_ABREV) + "</tr>",
+        "<tr><th style='width:68px;'>HORA</th>" + "".join(f"<th>{d}</th>" for d in DIAS_ABREV) + "</tr>",
     ]
     for h in horas:
         fila = [f"<td class='hora'>{h:02d}:00</td>"]
         for d in DIAS:
             celda = celdas.get((h, d))
             if celda:
-                bg = color_de[celda["cod_asig"]]
-                clases = "clase"
-                # Tooltip con datos completos al pasar el mouse
+                tema = tema_de[celda["cod_asig"]]
+                card_cls = "evento-card violada" if celda.get("violaciones") else "evento-card"
                 tooltip = f"{celda['abrev']} · Sección {celda['seccion']} · Prof. {celda['docente']}"
                 if celda.get("violaciones"):
-                    clases += " violada"
                     motivos_txt = ", ".join(_MOTIVO_DESC.get(m, m) for m in celda["violaciones"])
-                    tooltip += f" | ⚠ Viola: {motivos_txt}"
+                    tooltip += f" | ⚠️ Viola: {motivos_txt}"
+
                 fila.append(
-                    f"<td class='{clases}' style='background:{bg};' title='{tooltip}'>"
-                    f"<div class='asig'>{celda['abrev']}</div>"
-                    f"<div class='sec'>Sec {celda['seccion']}</div>"
-                    f"<div class='prof'>{celda['docente']}</div>"
+                    f"<td>"
+                    f"<div class='{card_cls}' "
+                    f"style='background:{tema['bg']}; border-left-color:{tema['border']}; color:{tema['text']};' "
+                    f"title='{tooltip}'>"
+                    f"<div class='evento-top'>"
+                    f"<span class='evento-asig' style='color:{tema['text']};'>{celda['abrev']}</span>"
+                    f"<span class='evento-sec' style='background:{tema['badge_bg']}; color:{tema['badge_text']};'>Sec {celda['seccion']}</span>"
+                    f"</div>"
+                    f"<div class='evento-prof' style='color:{tema['text']};'>👤 {celda['docente']}</div>"
+                    f"</div>"
                     f"</td>"
                 )
             else:
@@ -689,7 +916,7 @@ def _render_leyenda(cromosoma):
             "Cupo": f"{s.matriculados}/{s.topeAlumnos}",
             "Cr": int(s.creditos),
         })
-    st.dataframe(filas, hide_index=True, use_container_width=True)
+    st.dataframe(filas, hide_index=True)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -698,11 +925,17 @@ def _render_leyenda(cromosoma):
 
 def _sidebar():
     with st.sidebar:
-        # Título institucional
+        # Branding institucional
         st.markdown(
-            "<h2 style='margin:0 0 0.25rem 0; color:#8B1A1A;'>🎓 Horarios UNMSM</h2>"
-            "<div style='color:#6B7280; font-size:0.85rem; margin-bottom:1rem;'>"
-            "Optimizador con algoritmos genéticos</div>",
+            """
+            <div class="sidebar-brand">
+              <div class="sidebar-brand-icon">🎓</div>
+              <div class="sidebar-brand-text">
+                <h2>UNMSM Horarios</h2>
+                <span>Ingeniería de Sistemas · FISI</span>
+              </div>
+            </div>
+            """,
             unsafe_allow_html=True,
         )
 
@@ -722,7 +955,7 @@ def _sidebar():
                 help="Marcar solo si los datos del caché están desactualizados.",
             )
 
-            if st.button("Conectar al SUM", type="primary", use_container_width=True):
+            if st.button("Conectar al SUM", type="primary", width="stretch"):
                 if not usuario or not password:
                     st.error("Faltan credenciales.")
                     return
@@ -736,22 +969,30 @@ def _sidebar():
                             f"Datos cargados desde {'caché local' if origen == 'cache' else 'SUM'}"
                         )
                         st.rerun()
+                    except SumCredencialesInvalidasError as e:
+                        st.error("🔑 **Credenciales incorrectas**: Usuario o contraseña no válidos en el SUM.")
+                    except SumMantenimientoError as e:
+                        st.error("🚧 **SUM no disponible**: El servidor de la universidad está en mantenimiento o no responde.")
+                    except SumTimeoutError as e:
+                        st.error("⏱️ **Tiempo de espera agotado**: El portal del SUM está respondiendo muy lento. Intentá nuevamente.")
+                    except SumDatosIncompletosError as e:
+                        st.warning("⚠️ **Datos incompletos**: No se encontraron cursos en prematrícula o programación para este alumno.")
                     except Exception as e:
-                        st.error(f"No se pudo conectar: {e}")
+                        st.error(f"❌ Error al conectar: {e}")
         else:
             alumno = st.session_state.alumno
             raw = alumno.raw
             nombre_completo = f"{raw.get('nomAlumno', '').strip()} {raw.get('apePaterno', '').strip()} {raw.get('apeMaterno', '').strip()}"
 
-            # Card del alumno
+            # Card ejecutiva del alumno
             st.markdown("#### 👤 Sesión activa")
             st.markdown(
                 f"""
-                <div class="sidebar-caja">
-                    <div class="nombre">{nombre_completo}</div>
-                    <div class="detalle">Código {raw.get('codAlumno', '?')}</div>
-                    <div class="detalle">Ciclo {alumno.cicloActual} · Ponderado {alumno.promedioPonderado}</div>
-                    <div class="detalle">{raw.get('desEscuela', '').strip()}</div>
+                <div class="user-card">
+                    <div class="user-name">{nombre_completo}</div>
+                    <div class="user-meta">Código: <strong>{raw.get('codAlumno', '?')}</strong> · Ciclo {alumno.cicloActual}</div>
+                    <div class="user-meta">Ponderado: <strong>{alumno.promedioPonderado}</strong></div>
+                    <div class="user-school">🏛️ {raw.get('desEscuela', '').strip() or 'FISI'}</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -759,7 +1000,7 @@ def _sidebar():
 
             # Acciones
             st.markdown("#### ⚙️ Acciones")
-            if st.button("🔄 Re-scrapear datos", use_container_width=True, help="Ignora el caché y consulta el SUM"):
+            if st.button("🔄 Re-scrapear datos", width="stretch", help="Ignora el caché y consulta el SUM"):
                 with st.spinner("Re-scrapeando..."):
                     try:
                         usuario = st.session_state.credenciales_usuario or os.getenv("LOGIN", "")
@@ -771,10 +1012,18 @@ def _sidebar():
                             _parsear_y_guardar(datos)
                             st.success("Re-scrape completo")
                             st.rerun()
+                    except SumCredencialesInvalidasError:
+                        st.error("🔑 **Credenciales incorrectas**: Verificá tu usuario y contraseña del SUM.")
+                    except SumMantenimientoError:
+                        st.error("🚧 **SUM en mantenimiento**: El portal del SUM reportó errores temporales.")
+                    except SumTimeoutError:
+                        st.error("⏱️ **Tiempo agotado**: El servidor tardó demasiado en responder.")
+                    except SumDatosIncompletosError:
+                        st.warning("⚠️ **Datos incompletos**: No se recibieron todos los endpoints requeridos.")
                     except Exception as e:
                         st.error(f"Fallo: {e}")
 
-            if st.button("🚪 Cerrar sesión", use_container_width=True):
+            if st.button("🚪 Cerrar sesión", width="stretch"):
                 for k in list(st.session_state.keys()):
                     del st.session_state[k]
                 _init_state()
@@ -785,6 +1034,90 @@ def _sidebar():
             st.caption(
                 "Sistema desarrollado como tesis de la Escuela Profesional de "
                 "Ingeniería de Sistemas · UNMSM"
+            )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# COMPONENTE DE CONVERGENCIA GENERACIONAL (TESIS)
+# ─────────────────────────────────────────────────────────────────────
+
+def _render_graficos_convergencia(historial: list, compacto: bool = False, key_prefix: str = "conv"):
+    """
+    Renderiza los gráficos y métricas de convergencia generacional del GA.
+    Separa limpiamente:
+    1. Curva de Fitness Factible (en rango positivo [0.0, 1.0]).
+    2. Curva de Factibilidad Poblacional (resolución de restricciones duras / CSP).
+    """
+    if not historial:
+        st.info("ℹ️ No hay historial de convergencia disponible para graficar.")
+        return
+
+    import pandas as pd
+    df_hist = pd.DataFrame(historial)
+    n_gen = len(df_hist)
+    mejor_max = df_hist["mejor"].max()
+    mejor_ini = df_hist["mejor"].iloc[0]
+    mejor_fin = df_hist["mejor"].iloc[-1]
+    val_ini = df_hist["validos"].iloc[0]
+    val_fin = df_hist["validos"].iloc[-1]
+
+    # Asegurar promedio_validos positivo
+    if "promedio_validos" not in df_hist.columns:
+        df_hist["promedio_validos"] = df_hist["mejor"]
+
+    df_fitness = df_hist.set_index("generacion")[["mejor", "promedio_validos"]].copy()
+    df_fitness.columns = ["Mejor Fitness Factible", "Promedio Soluciones Válidas"]
+
+    df_validos = df_hist.set_index("generacion")[["validos"]].copy()
+    df_validos.columns = ["Cromosomas Válidos (Sin Choques)"]
+
+    if compacto:
+        # Versión para la pestaña principal de Horarios
+        col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+        col_m1.metric("Generaciones", n_gen)
+        col_m2.metric("Mejor Fitness", f"{mejor_fin:.4f}", delta=f"{(mejor_fin - mejor_ini):+.4f}" if (mejor_fin != mejor_ini) else None)
+        col_m3.metric("Factibilidad Final", f"{val_fin} válidos", delta=f"{(val_fin - val_ini):+d} desde Gen 1" if (val_fin != val_ini) else None)
+        gen_conv = df_hist[df_hist["mejor"] >= (0.99 * mejor_max)]["generacion"].iloc[0] if mejor_max > 0 else n_gen
+        col_m4.metric("Convergencia Estimada", f"Gen #{gen_conv}", help="Generación donde el algoritmo alcanzó el 99% de su óptimo final.")
+
+        tab_fit, tab_val = st.tabs(["🧬 Curva de Fitness Factible", "🛡️ Evolución de Factibilidad"])
+        with tab_fit:
+            st.line_chart(df_fitness, height=270)
+            st.caption("Aptitud del mejor horario encontrado y del promedio de cromosomas factibles a lo largo de las generaciones.")
+        with tab_val:
+            st.line_chart(df_validos, height=270)
+            st.caption("Evolución de cromosomas factibles (sin choques). El atractor estacionario (~50%–65%) refleja el equilibrio dinámico entre la selección y la disrupción de operadores (Burke et al., 2004; Lewis, 2008).")
+    else:
+        # Versión analítica para la pestaña de Tesis y Experimentación
+        col_k1, col_k2, col_k3, col_k4 = st.columns(4)
+        col_k1.metric("Total Generaciones", n_gen)
+        col_k2.metric("Mejor Fitness", f"{mejor_fin:.4f}", delta=f"{(mejor_fin - mejor_ini):+.4f}")
+        col_k3.metric("Cromosomas Válidos", f"{val_ini} → {val_fin}", delta=f"{(val_fin - val_ini):+d} factibles")
+        dur_ga = st.session_state.get("duracion_ga", 0.0) or 0.0
+        col_k4.metric("Duración GA", f"{dur_ga:.2f}s")
+
+        col_g1, col_g2 = st.columns(2)
+        with col_g1:
+            st.markdown("##### 🧬 Evolución del Fitness Factible")
+            st.line_chart(df_fitness, height=310)
+            st.caption("Monitorea la convergencia de la función multiobjetivo (docentes, turnos, cupos) en escala positiva [0.0, 1.0].")
+        with col_g2:
+            st.markdown("##### 🛡️ Satisfacción de Restricciones Duras (CSP)")
+            st.line_chart(df_validos, height=310)
+            st.caption("Dinámica de factibilidad: rápida absorción en gen 1–5 y atractor estacionario (~60%) por equilibrio entre presión selectiva y disrupción estocástica (Burke et al., 2004).")
+
+        # Tabla y descarga de datos para el informe de tesis
+        with st.expander("📋 Ver dataset generacional completo (Tabla paso a paso)"):
+            st.dataframe(df_hist, hide_index=True)
+            u = _usuario_actual() or "alumno"
+            csv_bytes = df_hist.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                "📥 Descargar Datos de Convergencia (.CSV para informe de tesis)",
+                data=csv_bytes,
+                file_name=f"convergencia_ga_{u}_{n_gen}gen.csv",
+                mime="text/csv",
+                width="stretch",
+                key=f"{key_prefix}_dl_csv",
             )
 
 
@@ -806,13 +1139,18 @@ def _tab_horarios():
         st.warning("Tu prematrícula está vacía. No hay asignaturas para optimizar.")
         return
 
+    u = _usuario_actual()
+    if not st.session_state.horarios:
+        _restaurar_cache_ga(u)
+
     col1, col2 = st.columns([1, 3])
     with col1:
         k = cargar_config().ga.top_k
-        if st.button(f"🧬 Generar {k} horarios", type="primary", use_container_width=True):
+        if st.button(f"🧬 Generar {k} horarios", type="primary", width="stretch"):
             with st.spinner("Ejecutando algoritmo genético..."):
-                scores = cargar_scores_docentes()
-                prefs = cargar_preferencias_horarios()
+                u = _usuario_actual()
+                scores = cargar_scores_docentes(usuario=u)
+                prefs = cargar_preferencias_horarios(usuario=u)
                 contexto = _construir_contexto(scores, prefs)
                 _correr_ga(contexto)
                 st.rerun()
@@ -823,6 +1161,12 @@ def _tab_horarios():
                 f"**{st.session_state.duracion_ga:.2f}s** · "
                 f"Cromosomas válidos: {st.session_state.gen_validos_ini} → {st.session_state.gen_validos_fin}"
             )
+
+    # ── Curva de Convergencia del GA en la pestaña principal ──
+    historial = st.session_state.get("historial_convergencia", [])
+    if historial and st.session_state.horarios:
+        with st.expander("📈 Curva de Convergencia del Algoritmo Genético (Evolución Generacional)", expanded=False):
+            _render_graficos_convergencia(historial, compacto=True, key_prefix="tab_horarios")
 
     # ── Distinguir "aún no clickeó" vs "clickeó y no hay resultados" ──
     if not st.session_state.horarios:
@@ -860,8 +1204,9 @@ def _tab_horarios():
     # Render por horario
     horarios = st.session_state.horarios
     k_pedido = cargar_config().ga.top_k
-    scores = cargar_scores_docentes()
-    prefs = cargar_preferencias_horarios()
+    u = _usuario_actual()
+    scores = cargar_scores_docentes(usuario=u)
+    prefs = cargar_preferencias_horarios(usuario=u)
     contexto = _construir_contexto(scores, prefs)
     modo_fallback = st.session_state.modo_fallback
 
@@ -883,20 +1228,27 @@ def _tab_horarios():
         p_cup = preferencia_cupos(c, contexto)
         creditos = sum(s.creditos for s in c.secciones)
 
-        # Métricas como cards coloreadas por concepto
+        # Métricas ejecutivas estilo KPI Card
         m1, m2, m3, m4, m5 = st.columns(5)
-        for col, cls, label, valor in [
-            (m1, "fitness",  "Fitness",  f"{fit:.4f}"),
-            (m2, "horarios", "Horarios", f"{p_hor:.2f}"),
-            (m3, "docentes", "Docentes", f"{p_doc:.2f}"),
-            (m4, "cupos",    "Cupos",    f"{p_cup:.2f}"),
-            (m5, "creditos", "Créditos", f"{creditos:.0f}"),
-        ]:
+        kpis = [
+            (m1, "fitness",  "Fitness",   "🧬", f"{fit:.4f}",   "Puntaje global"),
+            (m2, "horarios", "Horarios",  "🕒", f"{p_hor:.2f}",  "Afinidad de turnos"),
+            (m3, "docentes", "Docentes",  "👨‍🏫", f"{p_doc:.2f}",  "Preferencia docente"),
+            (m4, "cupos",    "Cupos",     "📊", f"{p_cup:.2f}",  "Disponibilidad"),
+            (m5, "creditos", "Créditos",  "🎓", f"{creditos:.0f}", "Carga lectiva"),
+        ]
+        for col, cls, label, icon, valor, desc in kpis:
             col.markdown(
-                f"<div class='metrica-card {cls}'>"
-                f"<div class='label'>{label}</div>"
-                f"<div class='valor'>{valor}</div>"
-                f"</div>",
+                f"""
+                <div class='kpi-card {cls}'>
+                  <div class='kpi-header'>
+                    <span class='kpi-label'>{label}</span>
+                    <span class='kpi-icon'>{icon}</span>
+                  </div>
+                  <div class='kpi-value'>{valor}</div>
+                  <div class='kpi-desc'>{desc}</div>
+                </div>
+                """,
                 unsafe_allow_html=True,
             )
         st.write("")  # aire
@@ -908,7 +1260,7 @@ def _tab_horarios():
 
         # Expander con recomendaciones (solo en modo fallback)
         if modo_fallback:
-            recs = _recomendaciones_por_horario(c, contexto.prefs_horario)
+            recs = generar_recomendaciones_horario(c, contexto.prefs_horario)
             if recs:
                 with st.expander(f"💡 Recomendaciones para este horario ({len(recs)} sección(es) en conflicto)"):
                     for r in recs:
@@ -962,7 +1314,7 @@ def _tab_horarios():
                 data=f.read(),
                 file_name="horarios.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
+                width="stretch",
             )
     except Exception as e:
         col_x.error(f"Excel falló: {e}")
@@ -975,7 +1327,7 @@ def _tab_horarios():
                 data=f.read(),
                 file_name="horarios.pdf",
                 mime="application/pdf",
-                use_container_width=True,
+                width="stretch",
             )
     except Exception as e:
         col_p.error(f"PDF falló: {e}")
@@ -1003,10 +1355,13 @@ def _docentes_unicos_en_prematricula() -> List[dict]:
 
 
 def _tab_preferencias():
+    u = _usuario_actual()
     st.header("Preferencias")
+    user_label = f"del alumno **{u}**" if u else "de la sesión local"
     st.caption(
-        "Ajustá tus preferencias. El GA usa estos valores para puntuar cada horario. "
-        "Los cambios se guardan en `data/preferencias_*.json` (ignorados por git)."
+        f"Ajustá tus preferencias. El GA usa estos valores para puntuar cada horario. "
+        f"Los cambios se guardan de forma aislada para tu usuario ({user_label}) "
+        f"en `data/users/` (ignorados por git)."
     )
 
     sub_doc, sub_hor = st.tabs(["🎓 Docentes", "🕒 Horarios"])
@@ -1014,7 +1369,7 @@ def _tab_preferencias():
     # ───── Docentes ─────
     with sub_doc:
         st.write("**Slider 0 = evitar, 0.5 = neutral, 1 = preferido.**")
-        scores_actuales = cargar_scores_docentes()
+        scores_actuales = cargar_scores_docentes(usuario=u)
         docentes = _docentes_unicos_en_prematricula()
         if not docentes:
             st.info("Conectate al SUM primero para ver los docentes de tu prematrícula.")
@@ -1029,15 +1384,12 @@ def _tab_preferencias():
                     key=f"score_doc_{cod}",
                 )
             if st.button("💾 Guardar scores de docentes", type="primary"):
-                Path("data/preferencias_docentes.json").write_text(
-                    json.dumps({"scores": nuevos_scores}, indent=2, ensure_ascii=False),
-                    encoding="utf-8",
-                )
+                guardar_scores_docentes(nuevos_scores, usuario=u)
                 st.success("Guardado. Regenerá los horarios para que apliquen.")
 
     # ───── Horarios ─────
     with sub_hor:
-        prefs_actual = cargar_preferencias_horarios()
+        prefs_actual = cargar_preferencias_horarios(usuario=u)
 
         # ── Preferencias SOFT (penalizan el fitness) ──
         st.markdown("##### Preferencias (afectan el puntaje del horario)")
@@ -1112,17 +1464,15 @@ def _tab_preferencias():
 
         st.markdown("---")
         if st.button("💾 Guardar preferencias de horario", type="primary", key="save_hor"):
-            Path("data/preferencias_horarios.json").write_text(
-                json.dumps({
-                    "turno_preferido": nuevo_turno,
-                    "dias_libres_deseados": nuevos_dias,
-                    "densidad": nueva_dens,
-                    "dias_libres_obligatorios": nuevos_dias_hard,
-                    "hora_min": nueva_hora_min,
-                    "hora_max": nueva_hora_max,
-                }, indent=2, ensure_ascii=False),
-                encoding="utf-8",
+            prefs_nuevas = PreferenciasHorario(
+                turno_preferido=nuevo_turno,
+                dias_libres_deseados=nuevos_dias,
+                densidad=nueva_dens,
+                dias_libres_obligatorios=nuevos_dias_hard,
+                hora_min=nueva_hora_min,
+                hora_max=nueva_hora_max,
             )
+            guardar_preferencias_horarios(prefs_nuevas, usuario=u)
             st.success("Guardado. Regenerá los horarios para que apliquen.")
 
 
@@ -1157,7 +1507,7 @@ def _tab_datos():
         }
         for p in st.session_state.prematricula
     ]
-    st.dataframe(pre_rows, hide_index=True, use_container_width=True)
+    st.dataframe(pre_rows, hide_index=True)
 
     # Plan
     with st.expander(f"📖 Plan de estudios ({len(st.session_state.plan)} asignaturas)"):
@@ -1172,7 +1522,7 @@ def _tab_datos():
             }
             for a in st.session_state.plan
         ]
-        st.dataframe(plan_rows, hide_index=True, use_container_width=True)
+        st.dataframe(plan_rows, hide_index=True)
 
     # Historial
     aprobadas = extraer_aprobados(st.session_state.historial)
@@ -1187,7 +1537,7 @@ def _tab_datos():
             }
             for r in st.session_state.historial
         ]
-        st.dataframe(hist_rows, hide_index=True, use_container_width=True)
+        st.dataframe(hist_rows, hide_index=True)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1201,19 +1551,23 @@ def _render_header():
     nombre = f"{raw.get('nomAlumno', '').strip()} {raw.get('apePaterno', '').strip()}"
     escuela = raw.get("desEscuela", "").strip()
     codigo = raw.get("codAlumno", "?")
+    situacion = raw.get("desSituacion", "REGULAR").strip()
     st.markdown(
         f"""
         <div class="app-header">
             <div>
-                <h1>🎓 Optimizador de horarios UNMSM</h1>
+                <h1>🎓 Optimizador de Horarios UNMSM</h1>
                 <div class="subtitulo">
-                    Generación de horarios óptimos mediante algoritmos genéticos
+                    Sistema Inteligente de Generación Horaria · Algoritmos Genéticos
                 </div>
             </div>
-            <div class="alumno-info">
-                <strong>{nombre}</strong><br/>
-                {escuela}<br/>
-                Código {codigo} · Ciclo {alumno.cicloActual} · Ponderado {alumno.promedioPonderado}
+            <div class="alumno-chips">
+                <span class="badge-chip destacado">🏛️ {escuela or 'FISI'}</span>
+                <span class="badge-chip">👤 {nombre}</span>
+                <span class="badge-chip">🆔 {codigo}</span>
+                <span class="badge-chip">📚 Ciclo {alumno.cicloActual}</span>
+                <span class="badge-chip">⭐ Promedio {alumno.promedioPonderado}</span>
+                <span class="badge-chip">✅ {situacion}</span>
             </div>
         </div>
         """,
@@ -1222,40 +1576,242 @@ def _render_header():
 
 
 def _render_bienvenida():
-    """Pantalla de bienvenida cuando no hay sesión."""
+    """Pantalla de bienvenida y onboarding interactivo."""
     st.markdown(
         """
         <div class="app-header">
             <div>
-                <h1>🎓 Optimizador de horarios UNMSM</h1>
+                <h1>🎓 Optimizador de Horarios UNMSM</h1>
                 <div class="subtitulo">
-                    Generación de horarios óptimos mediante algoritmos genéticos
+                    Sistema Inteligente de Planificación de Matrícula · Algoritmos Genéticos
+                </div>
+            </div>
+            <div class="alumno-chips">
+                <span class="badge-chip destacado">🏛️ FISI UNMSM</span>
+                <span class="badge-chip">✨ Portal Web de Matrícula</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        """
+        <div class="onboarding-grid">
+            <div class="feature-card">
+                <div class="feature-icon-wrap sum">🔐</div>
+                <div class="feature-title">1. Conexión Directa al SUM</div>
+                <div class="feature-text">
+                    Autenticación segura con tus credenciales institucionales. Extrae automáticamente tu prematrícula, plan de estudios, vacantes y prerequisitos en tiempo real.
+                </div>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon-wrap prefs">⚙️</div>
+                <div class="feature-title">2. Preferencias a Tu Medida</div>
+                <div class="feature-text">
+                    Personalizá turnos (mañana, tarde, noche), días libres obligatorios, docentes favoritos y límites de horarios. El optimizador adapta el cronograma a tu vida.
+                </div>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon-wrap ga">🧬</div>
+                <div class="feature-title">3. Algoritmo Genético</div>
+                <div class="feature-text">
+                    Evolución cromosómica de 5 horarios óptimos y libres de choques. Visualizá la grilla interactiva, métricas de calidad y exportá directamente en Excel o PDF.
                 </div>
             </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+
     col_left, col_right = st.columns([2, 1])
     with col_left:
-        st.markdown(
-            """
-            ### Cómo funciona
-
-            1. **Iniciá sesión** con tus credenciales del SUM desde la barra lateral.
-            2. **Ajustá tus preferencias** de docentes y horarios.
-            3. **Generá 5 horarios óptimos** diferentes entre sí, listos para revisar y descargar.
-
-            El sistema evalúa cada horario contra restricciones duras (choques, prerequisitos,
-            créditos) y suaves (turno preferido, docentes, disponibilidad de cupos) para
-            entregarte alternativas realistas que respetan tu situación académica.
-            """
+        st.info(
+            "👉 **Para comenzar:** Ingresá tus credenciales del SUM en la barra lateral izquierda y presioná **Conectar al SUM**."
         )
     with col_right:
-        st.info(
-            "💡 Si tenés configurado `LOGIN` y `PASSWORD` en un archivo `.env`, "
-            "las credenciales se cargan como valores por defecto."
+        st.caption(
+            "🔒 **Seguridad y Privacidad:** Las credenciales y preferencias se procesan localmente en tu sesión y están aisladas por usuario en `data/users/`."
         )
+
+
+def _tab_comparador():
+    st.markdown("### ⚖️ Comparador de Horarios Lado a Lado")
+    st.markdown(
+        "<div style='color:#6B7280; margin-bottom:1rem;'>"
+        "Analizá y contrastá las diferencias cualitativas y cuantitativas entre dos soluciones generadas por el algoritmo genético."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    horarios = st.session_state.horarios
+    if not horarios:
+        st.info("ℹ️ Todavía no se han generado los horarios para poder compararlos.")
+        if st.button("🧬 Generar Horarios Ahora", type="primary", key="btn_gen_comp"):
+            if not st.session_state.prematricula:
+                st.warning("Conectate al SUM primero para cargar tu prematrícula.")
+            else:
+                with st.spinner("Ejecutando algoritmo genético..."):
+                    u = _usuario_actual()
+                    scores = cargar_scores_docentes(usuario=u)
+                    prefs = cargar_preferencias_horarios(usuario=u)
+                    contexto = _construir_contexto(scores, prefs)
+                    _correr_ga(contexto)
+                st.rerun()
+        return
+
+    if len(horarios) < 2:
+        st.warning("⚠️ Se generó un único horario posible. No hay múltiples variantes para contrastar.")
+        return
+
+    n_hor = len(horarios)
+    col_sel1, col_sel2 = st.columns(2)
+    with col_sel1:
+        idx_a = st.selectbox(
+            "Seleccionar Horario A",
+            options=list(range(n_hor)),
+            format_func=lambda i: f"Horario #{i+1}",
+            index=0,
+            key="cmp_idx_a",
+        )
+    with col_sel2:
+        idx_b = st.selectbox(
+            "Seleccionar Horario B",
+            options=list(range(n_hor)),
+            format_func=lambda i: f"Horario #{i+1}",
+            index=1 if n_hor > 1 else 0,
+            key="cmp_idx_b",
+        )
+
+    cA = horarios[idx_a]
+    cB = horarios[idx_b]
+
+    u = _usuario_actual()
+    scores = cargar_scores_docentes(usuario=u)
+    prefs = cargar_preferencias_horarios(usuario=u)
+    contexto = _construir_contexto(scores, prefs)
+
+    resA = HorarioResultado.construir(idx_a + 1, cA, contexto)
+    resB = HorarioResultado.construir(idx_b + 1, cB, contexto)
+
+    # Métricas contrastadas
+    st.markdown("#### 📊 Balance Comparativo")
+    m1, m2, m3, m4 = st.columns(4)
+    delta_fit = resB.fitness - resA.fitness
+    delta_hor = resB.score_horarios - resA.score_horarios
+    delta_doc = resB.score_docentes - resA.score_docentes
+    delta_cup = resB.score_cupos - resA.score_cupos
+
+    m1.metric("🧬 Fitness", f"{resA.fitness:.4f} vs {resB.fitness:.4f}", delta=f"{delta_fit:+.4f}" if delta_fit != 0 else None)
+    m2.metric("🕒 Turnos & Días", f"{resA.score_horarios:.2f} vs {resB.score_horarios:.2f}", delta=f"{delta_hor:+.2f}" if delta_hor != 0 else None)
+    m3.metric("👨‍🏫 Docentes", f"{resA.score_docentes:.2f} vs {resB.score_docentes:.2f}", delta=f"{delta_doc:+.2f}" if delta_doc != 0 else None)
+    m4.metric("📊 Cupos", f"{resA.score_cupos:.2f} vs {resB.score_cupos:.2f}", delta=f"{delta_cup:+.2f}" if delta_cup != 0 else None)
+
+    # Tabla comparativa de cursos y secciones
+    st.markdown("#### 🔄 Matriz de Asignaturas y Docentes")
+    sec_A = {s.codAsignatura: s for s in cA.secciones}
+    sec_B = {s.codAsignatura: s for s in cB.secciones}
+    todas_asig = sorted(set(sec_A.keys()) | set(sec_B.keys()))
+
+    filas_comp = []
+    diferencias = 0
+    for cod in todas_asig:
+        sA = sec_A.get(cod)
+        sB = sec_B.get(cod)
+        nombre = sA.desAsignatura.strip() if sA else (sB.desAsignatura.strip() if sB else cod)
+        secA_txt = f"Sec {sA.codSeccion} · {sA.apePatDocente}" if sA else "—"
+        secB_txt = f"Sec {sB.codSeccion} · {sB.apePatDocente}" if sB else "—"
+
+        coincide = (sA and sB and sA.codSeccion == sB.codSeccion)
+        if not coincide:
+            diferencias += 1
+
+        filas_comp.append({
+            "Código": cod,
+            "Asignatura": nombre,
+            f"Horario #{idx_a+1}": secA_txt,
+            f"Horario #{idx_b+1}": secB_txt,
+            "Estado": "✅ Idéntico" if coincide else "🔄 Distinta Sección",
+        })
+
+    st.dataframe(filas_comp, hide_index=True)
+    if diferencias == 0:
+        st.success("Ambos horarios seleccionados tienen exactamente las mismas secciones.")
+    else:
+        st.info(f"💡 Se encontraron **{diferencias} asignatura(s) con distinta sección / docente** entre los dos horarios.")
+
+
+def _tab_tesis_experimentacion():
+    st.markdown("### 🔬 Panel de Experimentación Científica & Métricas del GA")
+    st.markdown(
+        "<div style='color:#6B7280; margin-bottom:1rem;'>"
+        "Herramientas de evaluación empírica para la sustentación de tesis: análisis de convergencia generacional, "
+        "trazabilidad del fitness y calibración de hiperparámetros del algoritmo genético."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    u = _usuario_actual()
+    if not st.session_state.horarios:
+        _restaurar_cache_ga(u)
+
+    historial = st.session_state.get("historial_convergencia", [])
+
+    # 1. Gráfica de convergencia y métricas
+    st.markdown("#### 📈 Curva de Convergencia Generacional")
+    if not historial:
+        st.info("ℹ️ Todavía no se ha ejecutado el algoritmo genético para este usuario.")
+        if st.button("🧬 Generar Horarios y Curva de Convergencia Ahora", type="primary", key="btn_gen_tesis"):
+            if not st.session_state.prematricula:
+                st.warning("Conectate al SUM primero para cargar tu prematrícula.")
+            else:
+                with st.spinner("Ejecutando algoritmo genético..."):
+                    scores = cargar_scores_docentes(usuario=u)
+                    prefs = cargar_preferencias_horarios(usuario=u)
+                    contexto = _construir_contexto(scores, prefs)
+                    _correr_ga(contexto)
+                st.rerun()
+    else:
+        _render_graficos_convergencia(historial, compacto=False, key_prefix="tab_tesis")
+
+    st.divider()
+
+    # 2. Calibración de Hiperparámetros
+    st.markdown("#### ⚙️ Calibración de Hiperparámetros del GA")
+    st.caption("Ajustá los parámetros del algoritmo para evaluar su impacto en la calidad de la solución y la velocidad de convergencia.")
+
+    cfg_def = cargar_config().ga
+    col_p1, col_p2, col_p3 = st.columns(3)
+    with col_p1:
+        p_tam = st.slider("Tamaño de población", min_value=20, max_value=200, value=cfg_def.tamano_poblacion, step=10)
+        p_gen = st.slider("Número de generaciones", min_value=10, max_value=150, value=cfg_def.generaciones, step=5)
+    with col_p2:
+        p_mut = st.slider("Tasa de mutación", min_value=0.01, max_value=0.40, value=cfg_def.tasa_mutacion, step=0.01)
+        p_tor = st.slider("Tamaño de torneo", min_value=2, max_value=6, value=cfg_def.tamano_torneo, step=1)
+    with col_p3:
+        p_eli = st.slider("Elitismo (individuos)", min_value=1, max_value=5, value=cfg_def.elitismo, step=1)
+        p_topk = st.slider("Horarios a devolver (top-k)", min_value=1, max_value=8, value=cfg_def.top_k, step=1)
+
+    if st.button("🧪 Ejecutar Experimento con Nuevos Parámetros", type="primary", width="stretch", key="btn_run_exp"):
+        if not st.session_state.prematricula:
+            st.warning("Conectate al SUM primero para cargar tu prematrícula.")
+            return
+
+        with st.spinner(f"Ejecutando GA experimental ({p_gen} gen, {p_tam} cromosomas)..."):
+            scores = cargar_scores_docentes(usuario=u)
+            prefs = cargar_preferencias_horarios(usuario=u)
+            contexto = _construir_contexto(scores, prefs)
+            custom_ga = ParametrosGA(
+                tamano_poblacion=p_tam,
+                generaciones=p_gen,
+                tasa_mutacion=p_mut,
+                tamano_torneo=p_tor,
+                elitismo=p_eli,
+                top_k=p_topk,
+                distancia_minima=cfg_def.distancia_minima,
+            )
+            _correr_ga(contexto, config_ga=custom_ga)
+            st.rerun()
 
 
 def main():
@@ -1267,9 +1823,19 @@ def main():
 
     _render_header()
 
-    tab_h, tab_p, tab_d = st.tabs(["📅 Mis horarios", "⚙️ Preferencias", "🎓 Datos académicos"])
+    tab_h, tab_comp, tab_tesis, tab_p, tab_d = st.tabs([
+        "📅 Mis horarios",
+        "⚖️ Comparador",
+        "🔬 Métricas de Tesis",
+        "⚙️ Preferencias",
+        "🎓 Datos académicos",
+    ])
     with tab_h:
         _tab_horarios()
+    with tab_comp:
+        _tab_comparador()
+    with tab_tesis:
+        _tab_tesis_experimentacion()
     with tab_p:
         _tab_preferencias()
     with tab_d:
