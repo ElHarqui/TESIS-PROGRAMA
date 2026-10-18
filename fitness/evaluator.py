@@ -1,4 +1,4 @@
-from models import Cromosoma
+from models.cromosoma import Cromosoma
 from .contexto import ContextoAlumno
 from .hard_constraints import calcular_penalizacion_hard
 from .soft_constraints import preferencia_horarios, preferencia_docentes, preferencia_cupos

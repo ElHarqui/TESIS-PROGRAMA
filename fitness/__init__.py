@@ -15,6 +15,9 @@ from .hard_constraints import (
     verificar_rango_horario,
     calcular_penalizacion_hard,
     es_factible,
+    ReglaAuditoria,
+    ReporteAuditoria,
+    auditar_restricciones_duras,
 )
 from .soft_constraints import preferencia_horarios, preferencia_docentes, preferencia_cupos
 from .evaluator import evaluar_fitness
@@ -36,6 +39,9 @@ __all__ = [
     "verificar_rango_horario",
     "calcular_penalizacion_hard",
     "es_factible",
+    "ReglaAuditoria",
+    "ReporteAuditoria",
+    "auditar_restricciones_duras",
     "preferencia_horarios",
     "preferencia_docentes",
     "preferencia_cupos",

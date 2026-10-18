@@ -20,6 +20,7 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import (
+    Image as RLImage,
     PageBreak,
     Paragraph,
     SimpleDocTemplate,
@@ -275,15 +276,43 @@ def _construir_tabla_grilla_pdf(cromosoma: Cromosoma) -> Table:
 def _construir_pagina_pdf(horario_res: HorarioResultado, styles):
     """Devuelve la lista de elementos (flowables) de la página de UN horario a partir del DTO."""
     elementos = []
-    elementos.append(Paragraph(f"<b>HORARIO #{horario_res.rank}</b>", styles["Heading1"]))
+
+    fact_label = "100% Factible (0 cruces)" if horario_res.es_factible else "Relajado / Alternativo"
     meta = (
         f"<b>Fitness:</b> {horario_res.fitness:.4f} &nbsp;&nbsp; "
-        f"<b>Horarios:</b> {horario_res.score_horarios:.2f} &nbsp;&nbsp; "
+        f"<b>Factibilidad:</b> {fact_label} &nbsp;&nbsp; "
+        f"<b>Turnos/Días:</b> {horario_res.score_horarios:.2f} &nbsp;&nbsp; "
         f"<b>Docentes:</b> {horario_res.score_docentes:.2f} &nbsp;&nbsp; "
         f"<b>Cupos:</b> {horario_res.score_cupos:.2f} &nbsp;&nbsp; "
         f"<b>Créditos:</b> {horario_res.creditos:.0f}"
     )
-    elementos.append(Paragraph(meta, styles["Normal"]))
+
+    logo_path = Path("assets/logoUNMSM.png")
+    if not logo_path.exists():
+        logo_path = Path("assets/logoUNMSM.jpg")
+    if not logo_path.exists():
+        logo_path = Path("logoUNMSM.jpg")
+
+    header_izq = [
+        Paragraph("<b>UNIVERSIDAD NACIONAL MAYOR DE SAN MARCOS</b> — FISI", styles["Heading3"]),
+        Paragraph(f"<b>PROPUESTA DE HORARIO #{horario_res.rank}</b>", styles["Heading1"]),
+        Paragraph(meta, styles["Normal"]),
+    ]
+
+    if logo_path.exists():
+        try:
+            logo_img = RLImage(str(logo_path), width=1.6 * cm, height=1.86 * cm)
+            header_table = Table([[header_izq, logo_img]], colWidths=[24.0 * cm, 2.5 * cm])
+            header_table.setStyle(TableStyle([
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+            ]))
+            elementos.append(header_table)
+        except Exception:
+            elementos.extend(header_izq)
+    else:
+        elementos.extend(header_izq)
+
     elementos.append(Spacer(1, 0.2 * cm))
 
     elementos.append(_construir_tabla_grilla_pdf(horario_res.cromosoma))

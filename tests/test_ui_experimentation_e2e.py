@@ -94,3 +94,51 @@ def test_app_con_sesion_activa_y_experimentacion():
 
     assert len(at.exception) == 0
     assert at.session_state.historial_convergencia is not None
+
+
+def test_tab_comparador_con_multiples_horarios_y_hamming():
+    """Valida que con múltiples horarios factibles el comparador multidimensional y la matriz de Hamming rendericen sin excepciones."""
+    at = AppTest.from_file("app.py", default_timeout=30)
+    at.run()
+    assert len(at.exception) == 0
+
+    # Inyectar 2 asignaturas con 2 secciones cada una para permitir variantes
+    s1_a = _crear_seccion("C1", 1, "LUNES", "08:00", "10:00")
+    s1_b = _crear_seccion("C1", 2, "LUNES", "14:00", "16:00")
+    s2_a = _crear_seccion("C2", 1, "MARTES", "10:00", "12:00")
+    s2_b = _crear_seccion("C2", 2, "MARTES", "16:00", "18:00")
+
+    alumno = DatosAlumno(
+        cicloActual=7,
+        promedioPonderado=15.5,
+        raw={
+            "codAlumno": "22200033",
+            "nomAlumno": "HARQUI",
+            "apePaterno": "DEF",
+            "apeMaterno": "TEST",
+            "desEscuela": "SISTEMAS",
+            "desFacultad": "FISI",
+            "desSituacion": "REGULAR",
+        }
+    )
+    prematricula = [
+        {"codAsignatura": "C1", "desAsignatura": "Curso C1", "num_creditaje": 4},
+        {"codAsignatura": "C2", "desAsignatura": "Curso C2", "num_creditaje": 4},
+    ]
+
+    at.session_state["alumno"] = alumno
+    at.session_state["secciones"] = [s1_a, s1_b, s2_a, s2_b]
+    at.session_state["prematricula"] = prematricula
+    at.session_state["plan"] = []
+    at.session_state["historial"] = []
+    at.session_state["credenciales_usuario"] = "22200033"
+
+    at.run()
+    btn_generar = next((b for b in at.button if "Generar" in b.label), None)
+    assert btn_generar is not None
+    btn_generar.click().run()
+
+    # No debe haber ninguna excepción (ni en Horarios, ni en Comparador, ni en Métricas)
+    assert len(at.exception) == 0, f"Excepciones encontradas: {at.exception}"
+    assert len(at.session_state.horarios) >= 2
+

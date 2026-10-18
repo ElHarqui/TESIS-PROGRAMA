@@ -11,6 +11,7 @@ Estructura:
 - Pestaña "Datos académicos": perfil + plan + prematrícula + historial
 """
 import asyncio
+import base64
 import json
 import os
 import sys
@@ -57,6 +58,7 @@ from fitness import (
     preferencia_cupos,
     preferencia_docentes,
     preferencia_horarios,
+    auditar_restricciones_duras,
 )
 from fitness.preferencias import (
     cargar_preferencias_horarios,
@@ -113,13 +115,36 @@ PALETA_CURSOS = [
 ]
 
 
+def _logo_data_uri() -> str:
+    """Retorna la URI data:base64 del logo institucional UNMSM (preferentemente PNG transparente)."""
+    for p in (Path("assets/logoUNMSM.png"), Path("assets/logoUNMSM.jpg"), Path("logoUNMSM.jpg")):
+        if p.exists():
+            try:
+                mime = "image/png" if p.suffix.lower() == ".png" else "image/jpeg"
+                with open(p, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode("utf-8")
+                    return f"data:{mime};base64,{b64}"
+            except Exception:
+                pass
+    return ""
+
+
+def _logo_base64() -> str:
+    """Compatibilidad: retorna solo el string base64 sin prefijo."""
+    uri = _logo_data_uri()
+    return uri.split(",", 1)[1] if "," in uri else uri
+
+
 # ─────────────────────────────────────────────────────────────────────
 # CONFIGURACIÓN DE LA PÁGINA
 # ─────────────────────────────────────────────────────────────────────
 
+_LOGO_PATH = Path("assets/logoUNMSM.png") if Path("assets/logoUNMSM.png").exists() else Path("assets/logoUNMSM.jpg")
+_LOGO_ICON = str(_LOGO_PATH) if _LOGO_PATH.exists() else "🎓"
+
 st.set_page_config(
     page_title="Optimizador de Horarios UNMSM",
-    page_icon="🎓",
+    page_icon=_LOGO_ICON,
     layout="wide",
     initial_sidebar_state="expanded",
     menu_items={
@@ -225,6 +250,63 @@ _CUSTOM_CSS = """
     color: #FEE2E2;
   }
 
+  .header-brand-wrap {
+    display: flex;
+    align-items: center;
+    gap: 1.15rem;
+  }
+  .header-logo-img {
+    width: 58px;
+    height: 58px;
+    object-fit: contain;
+    background: transparent;
+    filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.35));
+    flex-shrink: 0;
+  }
+  .sidebar-logo-img {
+    width: 42px;
+    height: 42px;
+    object-fit: contain;
+    background: transparent;
+    filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.15));
+    flex-shrink: 0;
+  }
+
+  /* Sidebar Branding Institucional */
+  .sidebar-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.2rem 0 0.85rem 0;
+    margin-bottom: 0.75rem;
+    border-bottom: 1px solid #E2E8F0;
+  }
+  .sidebar-brand-text {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 0;
+  }
+  .sidebar-brand-title {
+    font-size: 1.08rem;
+    font-weight: 800;
+    color: #7C1010;
+    line-height: 1.15;
+    margin: 0;
+    padding: 0;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+  }
+  .sidebar-brand-subtitle {
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: #64748B;
+    line-height: 1.25;
+    margin-top: 3px;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+  }
+
   /* Chips del alumno */
   .alumno-chips {
     display: flex;
@@ -280,6 +362,130 @@ _CUSTOM_CSS = """
   .kpi-card.docentes::before  { background: #059669; }
   .kpi-card.cupos::before     { background: #D97706; }
   .kpi-card.creditos::before  { background: #7C3AED; }
+
+  /* Banner y Panel de Auditoría de Restricciones Duras (CSP Factible) */
+  .audit-banner {
+    border-radius: 10px;
+    padding: 0.75rem 1.15rem;
+    margin: 0.65rem 0 0.85rem 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+  .audit-banner.success {
+    background: #ECFDF5;
+    border: 1px solid #A7F3D0;
+    box-shadow: 0 2px 6px rgba(16, 185, 129, 0.08);
+  }
+  .audit-banner.warning {
+    background: #FFFBEB;
+    border: 1px solid #FDE68A;
+    box-shadow: 0 2px 6px rgba(245, 158, 11, 0.08);
+  }
+  .audit-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+  .audit-title-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+  }
+  .audit-badge-icon {
+    font-size: 1.35rem;
+    line-height: 1;
+  }
+  .audit-main-title {
+    font-size: 0.94rem;
+    font-weight: 800;
+    color: #065F46;
+  }
+  .audit-banner.warning .audit-main-title {
+    color: #92400E;
+  }
+  .audit-sub-title {
+    font-size: 0.80rem;
+    font-weight: 500;
+    color: #047857;
+  }
+  .audit-banner.warning .audit-sub-title {
+    color: #B45309;
+  }
+  .audit-quick-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+  }
+  .audit-chip {
+    background: #FFFFFF;
+    border: 1px solid #6EE7B7;
+    color: #047857;
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 0.2rem 0.6rem;
+    border-radius: 9999px;
+  }
+  .audit-banner.warning .audit-chip {
+    border-color: #FCD34D;
+    color: #92400E;
+  }
+  .audit-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    overflow: hidden;
+    font-size: 0.84rem;
+    margin-top: 0.5rem;
+  }
+  .audit-table th {
+    background: #F8FAFC;
+    color: #475569;
+    font-weight: 700;
+    padding: 8px 12px;
+    border-bottom: 1px solid #E2E8F0;
+    text-align: left;
+  }
+  .audit-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #F1F5F9;
+    vertical-align: middle;
+  }
+  .audit-table tr:last-child td {
+    border-bottom: none;
+  }
+  .status-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    font-size: 0.74rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .status-tag.ok {
+    background: #DCFCE7;
+    color: #166534;
+    border: 1px solid #86EFAC;
+  }
+  .status-tag.fail {
+    background: #FEE2E2;
+    color: #991B1B;
+    border: 1px solid #FCA5A5;
+  }
+  .status-tag.info {
+    background: #F1F5F9;
+    color: #475569;
+    border: 1px solid #CBD5E1;
+  }
 
   .kpi-header {
     display: flex;
@@ -426,6 +632,95 @@ _CUSTOM_CSS = """
     top: 1px;
     right: 2px;
     font-size: 0.75rem;
+  }
+
+  /* Celdas de Hueco / Ventana Libre entre clases */
+  .horario td.celda-hueco {
+    background: #FAFAFA;
+  }
+  .hueco-card {
+    border: 1px dashed #CBD5E1;
+    border-radius: 6px;
+    background: #FFFFFF;
+    color: #64748B;
+    font-size: 0.72rem;
+    font-weight: 500;
+    padding: 3px 6px;
+    height: 100%;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    transition: all 0.15s ease;
+  }
+  .hueco-card:hover {
+    background: #F8FAFC;
+    border-color: #94A3B8;
+    color: #334155;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+
+  /* Barra de Resumen Semanal de Carga */
+  .resumen-semana-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    background: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 10px;
+    padding: 0.65rem 0.9rem;
+    margin: 0.5rem 0 1rem 0;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+    align-items: center;
+    justify-content: space-between;
+  }
+  .resumen-dias-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    align-items: center;
+  }
+  .chip-dia {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 0.76rem;
+    font-weight: 600;
+  }
+  .chip-dia.libre {
+    background: #ECFDF5;
+    color: #047857;
+    border: 1px solid #A7F3D0;
+  }
+  .chip-dia.ocupado {
+    background: #EFF6FF;
+    color: #1E40AF;
+    border: 1px solid #BFDBFE;
+  }
+  .chip-dia.con-hueco {
+    background: #FFFBEB;
+    color: #B45309;
+    border: 1px solid #FDE68A;
+  }
+  .chip-totales {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #334155;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* Card de Demostración del Caso de Estudio */
+  .demo-banner-box {
+    background: linear-gradient(135deg, #FFFBEB 0%, #FEF3C7 100%);
+    border: 1px solid #FCD34D;
+    border-radius: 12px;
+    padding: 1.15rem 1.25rem;
+    margin-top: 1.25rem;
   }
 
   /* Sidebar Styling */
@@ -730,7 +1025,7 @@ def _restaurar_cache_ga(usuario: str) -> bool:
     if not usuario or not st.session_state.get("secciones") or st.session_state.get("horarios"):
         return False
     try:
-        cache = Cache(usuario=usuario)
+        cache = Cache(usuario=usuario, ttl=0)
         datos = cache.get("ultimo_resultado_ga")
         if not datos or not datos.get("horarios"):
             return False
@@ -758,6 +1053,25 @@ def _restaurar_cache_ga(usuario: str) -> bool:
         return True
     except Exception:
         return False
+
+
+def _cargar_caso_estudio_demo() -> bool:
+    """
+    Carga instantáneamente el caso de estudio de validación empírica (sebastian_peralta)
+    con sus datos académicos completos del SUM y los 5 horarios precalculados por el GA.
+    Permite una sustentación de tesis 100% offline e inmune a caídas del portal de la universidad.
+    """
+    demo_user = "sebastian_peralta"
+    cache = Cache(usuario=demo_user, ttl=0)
+    datos = cache.get(CACHE_KEY)
+    if not datos:
+        return False
+
+    st.session_state.credenciales_usuario = demo_user
+    st.session_state.credenciales_password = "demo_password"
+    _parsear_y_guardar(datos)
+    _restaurar_cache_ga(demo_user)
+    return True
 
 
 def _correr_ga(contexto: ContextoAlumno, config_ga: Optional[ParametrosGA] = None):
@@ -854,6 +1168,13 @@ def _render_grilla_html(cromosoma, contexto_original: ContextoAlumno = None) -> 
 
     tema_de = {cod: PALETA_CURSOS[i % len(PALETA_CURSOS)] for i, cod in enumerate(asignaturas_orden)}
 
+    # Rango de horas por día para detectar huecos (ventanas libres)
+    horas_por_dia = {}
+    for d in DIAS:
+        hs = [h for (h, dia) in celdas.keys() if dia == d]
+        if hs:
+            horas_por_dia[d] = (min(hs), max(hs))
+
     # Solo horas con clase
     if celdas:
         horas = sorted({h for (h, _) in celdas.keys()})
@@ -892,11 +1213,84 @@ def _render_grilla_html(cromosoma, contexto_original: ContextoAlumno = None) -> 
                     f"</td>"
                 )
             else:
-                fila.append("<td></td>")
+                # Detección de hueco / ventana libre entre clases en el mismo día
+                rango = horas_por_dia.get(d)
+                if rango and rango[0] < h < rango[1]:
+                    fila.append(
+                        f"<td class='celda-hueco'>"
+                        f"<div class='hueco-card' title='Ventana libre entre clases en {d}'>"
+                        f"☕ Libre"
+                        f"</div>"
+                        f"</td>"
+                    )
+                else:
+                    fila.append("<td></td>")
         html.append("<tr>" + "".join(fila) + "</tr>")
     html.append("</table>")
     html.append("</div>")
     return "\n".join(html)
+
+
+def _render_resumen_semana(cromosoma) -> str:
+    """
+    Genera la barra visual de resumen de carga semanal:
+    - Desglose por día: Horas lectivas, si es libre, o si tiene huecos/ventanas.
+    - Totales: Horas lectivas totales, créditos y días libres efectivos.
+    """
+    horas_por_dia = {d: set() for d in DIAS}
+    for s in cromosoma.secciones:
+        for b in s.bloques:
+            if b.dia in DIAS and b.horaInicio and b.horaFin:
+                h_ini = int(b.horaInicio.split(":")[0])
+                h_fin = int(b.horaFin.split(":")[0])
+                for h in range(max(h_ini, HORA_INICIO), min(h_fin, HORA_FIN)):
+                    horas_por_dia[b.dia].add(h)
+
+    chips_html = []
+    total_horas = 0
+    dias_libres = 0
+
+    for d, d_abrev in zip(DIAS, DIAS_ABREV):
+        hs = horas_por_dia[d]
+        cant_h = len(hs)
+        total_horas += cant_h
+        if cant_h == 0:
+            dias_libres += 1
+            chips_html.append(f"<span class='chip-dia libre'>🎉 {d_abrev}: Libre</span>")
+        else:
+            min_h, max_h = min(hs), max(hs)
+            cant_huecos = (max_h - min_h + 1) - cant_h
+            if cant_huecos > 0:
+                chips_html.append(
+                    f"<span class='chip-dia con-hueco' title='{cant_h}h de clase y {cant_huecos}h de ventana libre'>"
+                    f"⚠️ {d_abrev}: {cant_h}h ({cant_huecos}h libre)"
+                    f"</span>"
+                )
+            else:
+                chips_html.append(
+                    f"<span class='chip-dia ocupado' title='{cant_h}h continuas de clase'>"
+                    f"📘 {d_abrev}: {cant_h}h"
+                    f"</span>"
+                )
+
+    creditos = sum(s.creditos for s in cromosoma.secciones)
+
+    html = f"""
+    <div class="resumen-semana-bar">
+      <div class="resumen-dias-group">
+        <span style="font-size:0.75rem; font-weight:700; color:#64748B; text-transform:uppercase; margin-right:4px;">Carga diaria:</span>
+        {''.join(chips_html)}
+      </div>
+      <div class="chip-totales">
+        <span>⏱️ <strong>{total_horas}h</strong> lectivas</span>
+        <span>·</span>
+        <span>🎓 <strong>{creditos:.0f}</strong> créditos</span>
+        <span>·</span>
+        <span>✨ <strong>{dias_libres}</strong> día(s) libre(s)</span>
+      </div>
+    </div>
+    """
+    return html
 
 
 def _render_leyenda(cromosoma):
@@ -925,14 +1319,20 @@ def _render_leyenda(cromosoma):
 
 def _sidebar():
     with st.sidebar:
-        # Branding institucional
+        # Branding institucional con escudo UNMSM
+        logo_uri = _logo_data_uri()
+        logo_sidebar_html = (
+            f'<img src="{logo_uri}" class="sidebar-logo-img" alt="UNMSM">'
+            if logo_uri
+            else '<div class="sidebar-brand-icon">🎓</div>'
+        )
         st.markdown(
-            """
+            f"""
             <div class="sidebar-brand">
-              <div class="sidebar-brand-icon">🎓</div>
+              {logo_sidebar_html}
               <div class="sidebar-brand-text">
-                <h2>UNMSM Horarios</h2>
-                <span>Ingeniería de Sistemas · FISI</span>
+                <div class="sidebar-brand-title">UNMSM Horarios</div>
+                <div class="sidebar-brand-subtitle">Ingeniería de Sistemas · FISI</div>
               </div>
             </div>
             """,
@@ -1122,6 +1522,127 @@ def _render_graficos_convergencia(historial: list, compacto: bool = False, key_p
 
 
 # ─────────────────────────────────────────────────────────────────────
+# PANEL DE AUDITORÍA DE RESTRICCIONES DURAS (CSP)
+# ─────────────────────────────────────────────────────────────────────
+
+def _render_panel_auditoria(c, contexto):
+    """
+    Renderiza el Panel de Certificación de Factibilidad y Auditoría de Restricciones Duras (CSP).
+    Demuestra formalmente ante el jurado de tesis que la propuesta satisface todas las restricciones
+    duras del problema de optimización.
+    """
+    auditoria = auditar_restricciones_duras(c, contexto)
+    es_fact = auditoria.es_factible
+    banner_cls = "success" if es_fact else "warning"
+    icon = "🛡️" if es_fact else "⚠️"
+    titulo = "Auditoría de Restricciones Duras · 100% Factible (CSP Verificado)" if es_fact else f"Auditoría de Restricciones · {auditoria.total_violaciones} Infracción(es) Detectada(s)"
+    subtitulo = (
+        "Cero cruces de horario, unicidad curricular y límites reglamentarios formalmente satisfechos."
+        if es_fact
+        else f"Horario en modo alternativo con restricciones relajadas (penalización: {auditoria.penalizacion:.1f})."
+    )
+
+    chips_html = []
+    for r in auditoria.reglas:
+        if r.es_configurable and r.limite_esperado.startswith("No configurado"):
+            continue
+        c_icon = "✓" if r.cumple else "✗"
+        c_color = "#047857" if r.cumple else "#DC2626"
+        c_bg = "#FFFFFF" if r.cumple else "#FEE2E2"
+        c_bd = "#6EE7B7" if r.cumple else "#FCA5A5"
+
+        lbl = r.codigo
+        if r.codigo == "C1":
+            lbl = "0 Cruces Horarios" if r.cumple else "Con Cruces"
+        elif r.codigo == "C2":
+            lbl = "Asignaturas Únicas" if r.cumple else "Cursos Duplicados"
+        elif r.codigo == "C3":
+            lbl = f"{r.valor_obtenido.split(' ')[0]} Cr."
+        elif r.codigo == "C4":
+            lbl = "Prerrequisitos OK" if r.cumple else "Falta Prerreq."
+        elif r.codigo == "C5":
+            lbl = "Días Libres OK" if r.cumple else "Días Violados"
+        elif r.codigo == "C6":
+            lbl = "Franja Horaria OK" if r.cumple else "Fuera Franja"
+
+        chips_html.append(
+            f"<span style='background:{c_bg}; border:1px solid {c_bd}; color:{c_color}; "
+            f"font-size:0.75rem; font-weight:700; padding:2px 8px; border-radius:9999px;'>"
+            f"{c_icon} {lbl}</span>"
+        )
+
+    st.markdown(
+        f"""
+        <div class="audit-banner {banner_cls}">
+            <div class="audit-header">
+                <div class="audit-title-wrap">
+                    <span class="audit-badge-icon">{icon}</span>
+                    <div>
+                        <div class="audit-main-title">{titulo}</div>
+                        <div class="audit-sub-title">{subtitulo}</div>
+                    </div>
+                </div>
+                <div class="audit-quick-chips">
+                    {''.join(chips_html)}
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    with st.expander("🔬 Ver Auditoría Matemática Detallada (Demostración para Jurado de Tesis)", expanded=False):
+        st.markdown(
+            "Verificación analítica de cada una de las restricciones formales del modelo "
+            "definidas en el **Capítulo 3 (Marco Metodológico)** y evaluadas por el motor de optimización."
+        )
+
+        filas_tabla = []
+        for r in auditoria.reglas:
+            t_cls = "ok" if r.cumple else "fail"
+            t_txt = "✅ CUMPLE" if r.cumple else "❌ VIOLACIÓN"
+            if r.es_configurable and r.limite_esperado.startswith("No configurado"):
+                t_cls = "info"
+                t_txt = "ℹ️ OPCIONAL"
+
+            filas_tabla.append(
+                f"<tr>"
+                f"<td style='font-weight:700; width:55px;'>{r.icono} <b>{r.codigo}</b></td>"
+                f"<td style='font-weight:600;'>{r.nombre}</td>"
+                f"<td style='font-family:JetBrains Mono, monospace; font-size:0.78rem; color:#475569;'><code>{r.formulacion_latex}</code></td>"
+                f"<td style='font-weight:600;'>{r.valor_obtenido}</td>"
+                f"<td style='color:#64748B;'>{r.limite_esperado}</td>"
+                f"<td><span class='status-tag {t_cls}'>{t_txt}</span></td>"
+                f"<td style='font-size:0.80rem; color:#64748B;'>{r.detalle}</td>"
+                f"</tr>"
+            )
+
+        st.markdown(
+            f"""
+            <div style="overflow-x:auto;">
+                <table class="audit-table">
+                    <thead>
+                        <tr>
+                            <th>Cód.</th>
+                            <th>Restricción Formal</th>
+                            <th>Formulación Matemática</th>
+                            <th>Valor Obtenido</th>
+                            <th>Límite Exigido</th>
+                            <th>Estado</th>
+                            <th>Dictamen Técnico</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {''.join(filas_tabla)}
+                    </tbody>
+                </table>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────
 # TAB 1: MIS HORARIOS
 # ─────────────────────────────────────────────────────────────────────
 
@@ -1252,6 +1773,12 @@ def _tab_horarios():
                 unsafe_allow_html=True,
             )
         st.write("")  # aire
+
+        # ── PANEL DE AUDITORÍA FORMAL DE RESTRICCIONES DURAS (CSP FACTIBLE) ──
+        _render_panel_auditoria(c, contexto)
+
+        # Resumen de carga semanal y balance de días
+        st.markdown(_render_resumen_semana(c), unsafe_allow_html=True)
 
         # En modo fallback, pasamos el contexto original a la grilla para que
         # marque las celdas violadoras con borde rojo.
@@ -1552,13 +2079,22 @@ def _render_header():
     escuela = raw.get("desEscuela", "").strip()
     codigo = raw.get("codAlumno", "?")
     situacion = raw.get("desSituacion", "REGULAR").strip()
+    logo_uri = _logo_data_uri()
+    logo_img_html = (
+        f'<img src="{logo_uri}" class="header-logo-img" alt="UNMSM">'
+        if logo_uri
+        else ''
+    )
     st.markdown(
         f"""
         <div class="app-header">
-            <div>
-                <h1>🎓 Optimizador de Horarios UNMSM</h1>
-                <div class="subtitulo">
-                    Sistema Inteligente de Generación Horaria · Algoritmos Genéticos
+            <div class="header-brand-wrap">
+                {logo_img_html}
+                <div>
+                    <h1>Optimizador de Horarios UNMSM</h1>
+                    <div class="subtitulo">
+                        Sistema Inteligente de Generación Horaria · Algoritmos Genéticos
+                    </div>
                 </div>
             </div>
             <div class="alumno-chips">
@@ -1577,13 +2113,22 @@ def _render_header():
 
 def _render_bienvenida():
     """Pantalla de bienvenida y onboarding interactivo."""
+    logo_uri = _logo_data_uri()
+    logo_img_html = (
+        f'<img src="{logo_uri}" class="header-logo-img" alt="UNMSM">'
+        if logo_uri
+        else ''
+    )
     st.markdown(
-        """
+        f"""
         <div class="app-header">
-            <div>
-                <h1>🎓 Optimizador de Horarios UNMSM</h1>
-                <div class="subtitulo">
-                    Sistema Inteligente de Planificación de Matrícula · Algoritmos Genéticos
+            <div class="header-brand-wrap">
+                {logo_img_html}
+                <div>
+                    <h1>Optimizador de Horarios UNMSM</h1>
+                    <div class="subtitulo">
+                        Sistema Inteligente de Planificación de Matrícula · Algoritmos Genéticos
+                    </div>
                 </div>
             </div>
             <div class="alumno-chips">
@@ -1634,12 +2179,41 @@ def _render_bienvenida():
             "🔒 **Seguridad y Privacidad:** Las credenciales y preferencias se procesan localmente en tu sesión y están aisladas por usuario en `data/users/`."
         )
 
+    # ── MODO DEMOSTRACIÓN (CASO DE ESTUDIO OFFLINE) ──
+    with st.container(border=True):
+        col_info, col_btn = st.columns([3, 1.2], vertical_alignment="center")
+        with col_info:
+            st.markdown(
+                """
+                <div style="padding: 0.15rem 0;">
+                    <div style="display:inline-flex; align-items:center; gap:5px; background:#FEF3C7; color:#92400E; border:1px solid #FCD34D; border-radius:9999px; padding:2px 10px; font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:0.35rem;">
+                        🎯 Modo Sustentación · Validación Empírica
+                    </div>
+                    <div style="font-size:1.02rem; font-weight:800; color:#0F172A; margin-bottom:0.2rem;">
+                        Caso de Estudio de Tesis (100% Offline)
+                    </div>
+                    <div style="font-size:0.83rem; color:#64748B; line-height:1.45;">
+                        Explorá el perfil de validación (<strong>9no ciclo · Plan 2018 · 8 cursos · 3,240 combinaciones</strong>) con 5 horarios factibles y métricas precalculadas. Inmune a caídas del SUM.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with col_btn:
+            if st.button("🚀 Cargar Caso Demo", type="primary", use_container_width=True, key="btn_demo_bienvenida"):
+                with st.spinner("Cargando caso de validación..."):
+                    if _cargar_caso_estudio_demo():
+                        st.rerun()
+                    else:
+                        st.error("No se encontró el caché en data/users/sebastian_peralta/.")
+
 
 def _tab_comparador():
-    st.markdown("### ⚖️ Comparador de Horarios Lado a Lado")
+    st.markdown("### ⚖️ Comparador Multidimensional y Análisis de Diversidad")
     st.markdown(
         "<div style='color:#6B7280; margin-bottom:1rem;'>"
-        "Analizá y contrastá las diferencias cualitativas y cuantitativas entre dos soluciones generadas por el algoritmo genético."
+        "Analizá y contrastá las diferencias cualitativas, cuantitativas y la diversidad fenotípica "
+        "entre los horarios generados por el algoritmo genético."
         "</div>",
         unsafe_allow_html=True,
     )
@@ -1665,6 +2239,120 @@ def _tab_comparador():
         return
 
     n_hor = len(horarios)
+    u = _usuario_actual()
+    scores = cargar_scores_docentes(usuario=u)
+    prefs = cargar_preferencias_horarios(usuario=u)
+    contexto = _construir_contexto(scores, prefs)
+
+    # ─────────────────────────────────────────────────────────────
+    # 1. EVALUACIÓN MULTIOBJETIVO GLOBAL (TODOS LOS HORARIOS)
+    # ─────────────────────────────────────────────────────────────
+    st.markdown("#### 📊 Balance Multiobjetivo (Todos los Horarios)")
+    st.caption("Puntaje normalizado en cada dimensión de la función de aptitud multiobjetivo [0.0, 1.0].")
+
+    import pandas as pd
+    res_list = [HorarioResultado.construir(i + 1, c, contexto) for i, c in enumerate(horarios)]
+    df_metricas = pd.DataFrame([
+        {
+            "Horario": f"Horario #{r.rank}",
+            "Fitness Global": round(r.fitness, 4),
+            "Factibilidad (CSP)": "✅ 100% Factible" if r.es_factible else f"⚠️ {getattr(r.auditoria, 'total_violaciones', 1)} viol.",
+            "Turnos & Días (40%)": round(r.score_horarios, 2),
+            "Docentes (30%)": round(r.score_docentes, 2),
+            "Cupos (30%)": round(r.score_cupos, 2),
+            "Créditos": int(r.creditos),
+        }
+        for r in res_list
+    ])
+
+    col_t1, col_t2 = st.columns([1, 1])
+    with col_t1:
+        st.dataframe(df_metricas, hide_index=True)
+    with col_t2:
+        df_chart = df_metricas.set_index("Horario")[["Fitness Global", "Turnos & Días (40%)", "Docentes (30%)", "Cupos (30%)"]]
+        st.bar_chart(df_chart, height=220)
+
+    st.write("")
+
+    # ─────────────────────────────────────────────────────────────
+    # 2. MATRIZ DE DIVERSIDAD DE HAMMING (TESIS: NICHING / CROWDING)
+    # ─────────────────────────────────────────────────────────────
+    st.markdown("#### 🧬 Matriz de Diversidad Fenotípica (Distancia de Hamming)")
+    st.caption(
+        r"Verificación formal de diversidad entre cromosomas: $d_H(C_i, C_j) = \sum_{a \in A} \mathbf{1}[s_a(C_i) \neq s_a(C_j)]$. "
+        r"El operador de niching elitista garantiza $d_H \ge 1$ entre todos los horarios devueltos (Hamming, 1950; Mahfoud, 1995)."
+    )
+
+    # Cálculo de matriz de Hamming
+    matrix_hamming = []
+    min_dist_inter = 999
+    for i in range(n_hor):
+        fila_h = []
+        sec_i = {s.codAsignatura: s.codSeccion for s in horarios[i].secciones}
+        for j in range(n_hor):
+            if i == j:
+                fila_h.append(0)
+            else:
+                sec_j = {s.codAsignatura: s.codSeccion for s in horarios[j].secciones}
+                cods = set(sec_i.keys()) | set(sec_j.keys())
+                d_ij = sum(1 for cod in cods if sec_i.get(cod) != sec_j.get(cod))
+                fila_h.append(d_ij)
+                if d_ij < min_dist_inter:
+                    min_dist_inter = d_ij
+        matrix_hamming.append(fila_h)
+
+    # Render HTML estilizado del Heatmap de Hamming
+    cols_header = "".join(f"<th style='text-align:center; padding:8px 12px; background:#F8FAFC;'>H#{i+1}</th>" for i in range(n_hor))
+    filas_html = []
+    for i, fila in enumerate(matrix_hamming):
+        tds = [f"<td style='font-weight:700; background:#F8FAFC; text-align:left; padding:8px 12px;'>Horario #{i+1}</td>"]
+        for j, val in enumerate(fila):
+            if i == j:
+                tds.append("<td style='background:#F1F5F9; color:#94A3B8; font-weight:600; text-align:center;'>0</td>")
+            else:
+                # Paleta de calor azul institucional según distancia
+                bg_color = "#EFF6FF" if val == 1 else ("#DBEAFE" if val == 2 else "#BFDBFE")
+                txt_color = "#1E40AF" if val <= 2 else "#1E3A8A"
+                tds.append(
+                    f"<td style='background:{bg_color}; color:{txt_color}; font-weight:800; "
+                    f"font-family:JetBrains Mono, monospace; text-align:center; border-radius:4px;' "
+                    f"title='Distancia entre Horario #{i+1} y #{j+1}: {val} sección(es) distinta(s)'>"
+                    f"{val}"
+                    f"</td>"
+                )
+        filas_html.append("<tr>" + "".join(tds) + "</tr>")
+
+    tabla_heatmap_html = f"""
+    <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:10px; padding:0.9rem; overflow-x:auto; margin-bottom:0.75rem;">
+        <table style="width:100%; border-collapse:separate; border-spacing:4px; font-size:0.86rem;">
+            <thead>
+                <tr>
+                    <th style="text-align:left; padding:8px 12px; background:#F8FAFC;">Distancia d_H</th>
+                    {cols_header}
+                </tr>
+            </thead>
+            <tbody>
+                {''.join(filas_html)}
+            </tbody>
+        </table>
+    </div>
+    """
+    st.markdown(tabla_heatmap_html, unsafe_allow_html=True)
+
+    if min_dist_inter >= 1:
+        st.success(
+            f"✅ **Diversidad Validada Empíricamente:** Distancia mínima inter-horarios $\\min_{{i \\neq j}}(d_H) = {min_dist_inter} \\ge 1$. "
+            "Todas las soluciones devueltas difieren en al menos una sección/docente en el espacio fenotípico."
+        )
+    else:
+        st.warning("⚠️ Se detectaron soluciones redundantes (distancia Hamming 0).")
+
+    st.write("")
+
+    # ─────────────────────────────────────────────────────────────
+    # 3. CONTRASTE LADO A LADO DETALLADO (HORARIO A vs HORARIO B)
+    # ─────────────────────────────────────────────────────────────
+    st.markdown("#### 🔍 Contraste Detallado Lado a Lado (A vs B)")
     col_sel1, col_sel2 = st.columns(2)
     with col_sel1:
         idx_a = st.selectbox(
@@ -1685,17 +2373,10 @@ def _tab_comparador():
 
     cA = horarios[idx_a]
     cB = horarios[idx_b]
-
-    u = _usuario_actual()
-    scores = cargar_scores_docentes(usuario=u)
-    prefs = cargar_preferencias_horarios(usuario=u)
-    contexto = _construir_contexto(scores, prefs)
-
-    resA = HorarioResultado.construir(idx_a + 1, cA, contexto)
-    resB = HorarioResultado.construir(idx_b + 1, cB, contexto)
+    resA = res_list[idx_a]
+    resB = res_list[idx_b]
 
     # Métricas contrastadas
-    st.markdown("#### 📊 Balance Comparativo")
     m1, m2, m3, m4 = st.columns(4)
     delta_fit = resB.fitness - resA.fitness
     delta_hor = resB.score_horarios - resA.score_horarios
@@ -1708,7 +2389,7 @@ def _tab_comparador():
     m4.metric("📊 Cupos", f"{resA.score_cupos:.2f} vs {resB.score_cupos:.2f}", delta=f"{delta_cup:+.2f}" if delta_cup != 0 else None)
 
     # Tabla comparativa de cursos y secciones
-    st.markdown("#### 🔄 Matriz de Asignaturas y Docentes")
+    st.markdown("##### 🔄 Matriz de Asignaturas y Docentes")
     sec_A = {s.codAsignatura: s for s in cA.secciones}
     sec_B = {s.codAsignatura: s for s in cB.secciones}
     todas_asig = sorted(set(sec_A.keys()) | set(sec_B.keys()))
@@ -1738,7 +2419,7 @@ def _tab_comparador():
     if diferencias == 0:
         st.success("Ambos horarios seleccionados tienen exactamente las mismas secciones.")
     else:
-        st.info(f"💡 Se encontraron **{diferencias} asignatura(s) con distinta sección / docente** entre los dos horarios.")
+        st.info(f"💡 Se encontraron **{diferencias} asignatura(s) con distinta sección / docente** entre Horario #{idx_a+1} y Horario #{idx_b+1} (Distancia de Hamming = {diferencias}).")
 
 
 def _tab_tesis_experimentacion():

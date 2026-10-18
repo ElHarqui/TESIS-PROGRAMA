@@ -68,3 +68,40 @@ class TestEvaluatorProgressivePenalty:
         assert fit_grave < 0.0
         # El casi-factible DEBE tener un fitness mayor (más cercano a 0) que el grave
         assert fit_leve > fit_grave, "La penalización progresiva debe premiar la solución con menos choques"
+
+
+class TestAuditoriaRestricciones:
+    def test_auditoria_horario_factible(self):
+        from fitness.hard_constraints import auditar_restricciones_duras
+
+        s1 = _crear_seccion("C1", [_crear_bloque("C1", "LUNES", "08:00", "10:00")])
+        s2 = _crear_seccion("C2", [_crear_bloque("C2", "MARTES", "08:00", "10:00")])
+        c = Cromosoma([s1, s2])
+        ctx = ContextoAlumno(max_creditos=20.0)
+
+        rep = auditar_restricciones_duras(c, ctx)
+        assert rep.es_factible is True
+        assert rep.total_violaciones == 0
+        assert rep.penalizacion == 0.0
+        assert len(rep.reglas) == 6
+        assert all(r.cumple for r in rep.reglas)
+
+    def test_auditoria_detecta_choques_y_creditos(self):
+        from fitness.hard_constraints import auditar_restricciones_duras
+
+        s1 = _crear_seccion("C1", [_crear_bloque("C1", "LUNES", "08:00", "10:00")], creditos=12.0)
+        s2 = _crear_seccion("C2", [_crear_bloque("C2", "LUNES", "09:00", "11:00")], creditos=12.0)
+        c = Cromosoma([s1, s2])
+        ctx = ContextoAlumno(max_creditos=20.0)  # Total 24 > 20
+
+        rep = auditar_restricciones_duras(c, ctx)
+        assert rep.es_factible is False
+        assert rep.total_violaciones >= 2
+
+        # C1 (choques) y C3 (créditos) deben haber fallado
+        reglas_por_cod = {r.codigo: r for r in rep.reglas}
+        assert reglas_por_cod["C1"].cumple is False
+        assert "1 cruces" in reglas_por_cod["C1"].valor_obtenido
+        assert reglas_por_cod["C3"].cumple is False
+        assert "24 créditos" in reglas_por_cod["C3"].valor_obtenido
+

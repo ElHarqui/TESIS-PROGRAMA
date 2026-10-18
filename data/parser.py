@@ -1,6 +1,7 @@
 from typing import List, Set
 from dataclasses import dataclass, field
-from models import BloqueHorario, Seccion
+from models.bloque import BloqueHorario
+from models.seccion import Seccion
 
 
 # ──────────────────────────────────────────────

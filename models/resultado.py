@@ -1,9 +1,10 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 from .cromosoma import Cromosoma
 
 if TYPE_CHECKING:
     from fitness.contexto import ContextoAlumno
+    from fitness.hard_constraints import ReporteAuditoria
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,7 @@ class HorarioResultado:
     score_cupos: float
     creditos: float
     es_factible: bool = True
+    auditoria: Optional["ReporteAuditoria"] = None
 
     @classmethod
     def construir(
@@ -34,14 +36,14 @@ class HorarioResultado:
             preferencia_horarios,
             preferencia_docentes,
             preferencia_cupos,
-            es_factible,
         )
+        from fitness.hard_constraints import auditar_restricciones_duras
 
         fit = evaluar_fitness(cromosoma, contexto)
         p_hor = preferencia_horarios(cromosoma, contexto)
         p_doc = preferencia_docentes(cromosoma, contexto)
         p_cup = preferencia_cupos(cromosoma, contexto)
-        factible = es_factible(cromosoma, contexto)
+        rep_auditoria = auditar_restricciones_duras(cromosoma, contexto)
 
         return cls(
             rank=rank,
@@ -51,5 +53,6 @@ class HorarioResultado:
             score_docentes=p_doc,
             score_cupos=p_cup,
             creditos=cromosoma.creditos_totales,
-            es_factible=factible,
+            es_factible=rep_auditoria.es_factible,
+            auditoria=rep_auditoria,
         )

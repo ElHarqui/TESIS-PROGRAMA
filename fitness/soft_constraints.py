@@ -1,4 +1,4 @@
-from models import Cromosoma
+from models.cromosoma import Cromosoma
 from .contexto import (
     ContextoAlumno,
     PreferenciasHorario,
